@@ -19,15 +19,18 @@ Early and experimental (see `port/vita/VERSION`).
 |---|---|
 | Boot, title screen, new game, story events, field | Working |
 | Frame rate | Stable 60 fps on hardware (rendering takes ~3–6 ms per frame, split over two cores) |
-| Battles | Being tested (latest fixes target the first battle) |
+| Battles | Being tested: the first battle starts; fixes for card/friend-card crashes are in progress |
 | Opening/ending movies (FMV) | Skipped (their decoder is GBA machine code that hasn't been ported yet) |
 | Music and sound effects | DirectSound channels working; the GBA's PSG ("Game Boy") channels are silent |
 | Saving | Working (`ux0:data/khcom/khcom.sav`) |
 
 ## Features
 
-- **16:9 widescreen**: the scene is rendered 282 pixels wide instead of 240, so it fills the Vita's screen and
-  shows more of the stage. `fit` (original 3:2 with side bars) and `stretch` modes are also available.
+- **16:9 widescreen, full 960x544**: the scene is rendered 282 pixels wide instead of 240 (scaled x3.4), so it
+  fills the Vita's screen and shows more of the stage. The game keeps only a 240-pixel window of each
+  scrolling map in video memory, so the extra columns are drawn straight from the game's full map: the
+  scenery really continues past the original edges, and sprites stay visible there. `fit` (original 3:2 with
+  side bars) and `stretch` modes are also available.
 - **Triangle = L + R** together (sleights), without pressing both shoulder buttons.
 - **Square = dodge roll**: rolls toward the direction you are holding, or the way the character faces. On the
   GBA this needs a double tap on the D-pad. Works for Sora and Riku.
@@ -59,6 +62,7 @@ Early and experimental (see `port/vita/VERSION`).
 | `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1` |
 | `khcom.sav` | Save data (the GBA's SRAM) |
 | `log.txt` | Startup trace and a status line with frame timings every second |
+| `log_prev.txt` | The previous run's log (kept when you relaunch after a crash) |
 
 You do not copy the ROM to the Vita: the game's data is built into the VPK.
 
@@ -68,12 +72,13 @@ Tested on macOS (Apple Silicon). Linux works with the equivalent packages.
 
 ### Requirements
 
-- [VitaSDK](https://vitasdk.org) with **vitaGL** rebuilt without its splash screen (the splash screen creates
-  a second GPU context):
+- [VitaSDK](https://vitasdk.org) with **vitaGL**:
   ```sh
   git clone https://github.com/Rinnegatamante/vitaGL && cd vitaGL
-  make NO_SPLASHSCREEN=1 HAVE_GLSL_SUPPORT=1 && make install
+  make HAVE_GLSL_SUPPORT=1 && make install
   ```
+  For the Vita3K emulator, build it with `NO_SPLASHSCREEN=1` instead: the vitaGL splash screen uses a
+  second GPU context, which Vita3K does not support.
 - `git`, `ninja`, `python3` with `pyyaml`
 - `arm-none-eabi-binutils` (used for the reference GBA build)
 - `libpng` and `pkg-config` (for the decomp's `gbagfx` tool)
@@ -138,6 +143,7 @@ configure step by itself when `port/vita/VERSION` or the build script changes.
 | Hardware | `port/vita/game/gba_system.c` | Emulated IO registers, palette, VRAM, OAM and SRAM; DMA; interrupt dispatch; BIOS calls; the per-frame scanline/IRQ loop |
 | Sound | `port/vita/game/m4a_port.c`, `host/vita_audio.c` | The m4a sequencer and mixer (originally ARM/Thumb assembly) rewritten in C, resampled to 48 kHz for `sceAudioOut` |
 | Video | `port/vita/host/ppu.c`, `vita_render.c`, `vita_video.c` | Scanline renderer for the GBA picture processor (tile/affine/bitmap backgrounds, sprites, windows, blending, mosaic), run on two cores and presented with vitaGL |
+| Widescreen | `port/vita/game/widescreen.c`, `ppu.c` | Captures each streamed map's camera after VBlank; the renderer fetches the widescreen margins from the full map |
 | Input | `port/vita/host/vita_input.c`, dodge hooks in `src/btl/btl.c` | Button mapping, Triangle → L+R, Square → dodge roll |
 | Decomp changes | `patches/khcom-vita.patch` | Hardware addresses routed through macros that still expand to the original values on GBA, plus Vita-only fixes. The GBA build still produces a byte-identical ROM |
 
@@ -146,7 +152,7 @@ configure step by itself when `port/vita/VERSION` or the build script changes.
 - `ux0:data/khcom/log.txt` shows the startup steps, every game mode change and per-second timings
   (`logic`, `render`, `present`, worst frame).
 - When the game crashes the Vita writes `ux0:data/psp2core-*.psp2dmp`. Wait until the file no longer ends in
-  `.tmp` before copying it, then run:
+  `.tmp` before copying it (a partial `.tmp` still holds the thread registers), then run:
   ```sh
   python3 tools/vita/parse_core.py psp2core-....psp2dmp
   ```

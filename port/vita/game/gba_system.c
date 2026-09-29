@@ -98,12 +98,41 @@ void* GbaPtr(const void* p) {
     PortFatal("GbaPtr: unmapped GBA address %08X", (unsigned)addr);
 }
 
+/*
+ * Addresses below EWRAM are the BIOS and unmapped space on the GBA: reads
+ * there return BIOS/open-bus garbage and writes are ignored. The game relies
+ * on that when it copies through NULL pointers; mirror it with zeros.
+ */
+static const u32 sZeroWord;
+
+static int IsBiosRegion(const void* p) {
+    return (u32)p < 0x02000000;
+}
+
+static void LogBiosAccess(const char* what, const void* src, const void* dst) {
+    static int sLogged;
+
+    if (sLogged < 16) {
+        sLogged++;
+        PortLog("%s: BIOS-region access src=%p dst=%p (ignored as on GBA)", what, src, dst);
+    }
+}
+
 /* BIOS ------------------------------------------------------------------------ */
 
 void CpuSet(void* src, void* dst, u32 ctrl) {
     u32 count = ctrl & 0x1FFFFF;
     int fixed = (ctrl & CPU_SET_SRC_FIXED) != 0;
 
+    if (IsBiosRegion(dst)) {
+        LogBiosAccess("CpuSet", src, dst);
+        return;
+    }
+    if (IsBiosRegion(src)) {
+        LogBiosAccess("CpuSet", src, dst);
+        src = (void*)&sZeroWord;
+        fixed = 1;
+    }
     src = GbaPtr(src);
     dst = GbaPtr(dst);
     if (ctrl & CPU_SET_32BIT) {
@@ -133,8 +162,20 @@ void CpuSet(void* src, void* dst, u32 ctrl) {
 
 void CpuFastSet(void* src, void* dst, s32 ctrl) {
     u32 count = ((u32)ctrl & 0x1FFFFF);
-    u32* s = (u32*)((u32)GbaPtr(src) & ~3);
-    u32* d = (u32*)((u32)GbaPtr(dst) & ~3);
+    u32* s;
+    u32* d;
+
+    if (IsBiosRegion(dst)) {
+        LogBiosAccess("CpuFastSet", src, dst);
+        return;
+    }
+    if (IsBiosRegion(src)) {
+        LogBiosAccess("CpuFastSet", src, dst);
+        src = (void*)&sZeroWord;
+        ctrl |= CPU_SET_SRC_FIXED;
+    }
+    s = (u32*)((u32)GbaPtr(src) & ~3);
+    d = (u32*)((u32)GbaPtr(dst) & ~3);
 
     count = (count + 7) & ~7;
     if (ctrl & CPU_SET_SRC_FIXED) {
@@ -281,8 +322,21 @@ static void DmaTransfer(int ch) {
     int dstStep = dstMode == 1 ? -size : dstMode == 2 ? 0 : size;
     int srcStep = srcMode == 1 ? -size : srcMode == 2 ? 0 : size;
     u32 count = dma->count;
-    u8* src = GbaPtr((void*)dma->src);
-    u8* dst = GbaPtr((void*)dma->dst);
+    u8* src;
+    u8* dst;
+
+    if (IsBiosRegion((void*)dma->dst)) {
+        LogBiosAccess("DMA", (void*)dma->src, (void*)dma->dst);
+        return;
+    }
+    if (IsBiosRegion((void*)dma->src)) {
+        LogBiosAccess("DMA", (void*)dma->src, (void*)dma->dst);
+        srcStep = 0;
+        src = (u8*)&sZeroWord;
+    } else {
+        src = GbaPtr((void*)dma->src);
+    }
+    dst = GbaPtr((void*)dma->dst);
 
     if (size == 4) {
         src = (u8*)((u32)src & ~3);
@@ -472,6 +526,8 @@ void VBlankIntrWait(void) {
     if (IO16(REG_OFFSET_DISPSTAT) & DISPSTAT_VBLANK_INTR) {
         GbaRaiseIrq(0);
     }
+    /* The handler just flushed scroll and VRAM: record the map camera for the next frame. */
+    PortCaptureBgStreams();
     IO16(REG_OFFSET_DISPSTAT) &= ~DISPSTAT_VBLANK;
     PORT_TRACE_EARLY("frame: done");
     if (gPortTraceFrames > 0) {

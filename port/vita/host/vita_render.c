@@ -94,6 +94,35 @@ void RenderInit(int width) {
     sceKernelStartThread(thread, 0, NULL);
 }
 
+/* Streams captured after the last VBlank; they describe the frame being captured now. */
+static PpuBgStream sStreams[4];
+
+/* Game thread. */
+void PortSetBgStream(int bg, const void* const* map, int width, int height, int worldX, int worldY,
+                     int shadowHofs, int shadowVofs) {
+    PpuBgStream* s = &sStreams[bg];
+    int i;
+
+    s->valid = 0;
+    if (map == NULL || width * height > PPU_STREAM_MAX_BLOCKS) {
+        return;
+    }
+    for (i = 0; i < width * height; i++) {
+        s->blocks[i] = (const uint16_t*)map[i];
+        /* A block the game hasn't pointed at real memory yet: skip the stream. */
+        if ((uintptr_t)s->blocks[i] < 0x10000000) {
+            return;
+        }
+    }
+    s->width = width;
+    s->height = height;
+    s->worldX = worldX;
+    s->worldY = worldY;
+    s->shadowHofs = shadowHofs;
+    s->shadowVofs = shadowVofs;
+    s->valid = 1;
+}
+
 /* Game thread: called for each visible line, before its HBlank. */
 void PortCaptureLine(int y) {
     memcpy(sFrames[sCapture].io[y], gGbaIo, PPU_LINE_IO_SIZE);
@@ -104,6 +133,7 @@ void PortCaptureSubmit(void) {
     PpuFrame* f = &sFrames[sCapture];
     SceUInt64 t0;
 
+    memcpy(f->streams, sStreams, sizeof(f->streams));
     memcpy(f->pltt, gGbaPltt, sizeof(f->pltt));
     memcpy(f->oam, gGbaOam, sizeof(f->oam));
     memcpy(f->vram, gGbaVram, sizeof(f->vram));

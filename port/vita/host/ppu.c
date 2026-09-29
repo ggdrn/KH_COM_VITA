@@ -50,6 +50,7 @@ typedef struct PpuCtx {
     int xoff;
     const PpuObj* objs;
     int objCount;
+    const PpuBgStream* streams;
     int32_t affX[2], affY[2];
     uint32_t latchX[2], latchY[2];
     uint16_t bgLine[4][MAX_W];
@@ -163,6 +164,8 @@ static void RenderTextBgMosaic(PpuCtx* c, int bg, int y) {
     }
 }
 
+static void RenderStreamMargin(PpuCtx* c, int bg, int y, int x0, int x1);
+
 static void RenderTextBg(PpuCtx* c, int bg, int y) {
     uint16_t cnt = IO16(c, 0x08 + bg * 2);
     int hofs = IO16(c, 0x10 + bg * 4) & 0x1FF;
@@ -238,6 +241,64 @@ static void RenderTextBg(PpuCtx* c, int bg, int y) {
         }
         x += n;
         tx = (tx + n) & wMask;
+    }
+
+    if (c->xoff > 0 && c->streams[bg].valid) {
+        RenderStreamMargin(c, bg, y, 0, c->xoff);
+        RenderStreamMargin(c, bg, y, c->xoff + GBA_SCREEN_WIDTH, c->width);
+    }
+}
+
+/*
+ * Widescreen margins of a streamed background: fetch tiles from the game's
+ * full map instead of the 256-pixel VRAM window, which only holds the
+ * original 240 columns (plus one) of the scene.
+ */
+static void RenderStreamMargin(PpuCtx* c, int bg, int y, int x0, int x1) {
+    const PpuBgStream* s = &c->streams[bg];
+    uint16_t cnt = IO16(c, 0x08 + bg * 2);
+    int hofs = IO16(c, 0x10 + bg * 4);
+    int vofs = IO16(c, 0x12 + bg * 4);
+    uint32_t charBase = ((cnt >> 2) & 3) * 0x4000;
+    int bpp8 = (cnt >> 7) & 1;
+    int mapW = s->width * 256, mapH = s->height * 256;
+    /* Per-line scroll effects move the view relative to the camera (mod 256). */
+    int wx0 = s->worldX + (int8_t)(hofs - s->shadowHofs) + (x0 - c->xoff);
+    int wy = s->worldY + (int8_t)(vofs - s->shadowVofs) + y;
+    const uint16_t* pltt = (const uint16_t*)c->pltt;
+    uint16_t* line = c->bgLine[bg];
+    int x;
+
+    wy %= mapH;
+    if (wy < 0) {
+        wy += mapH;
+    }
+    for (x = x0; x < x1; x++) {
+        int wx = (wx0 + (x - x0)) % mapW;
+        const uint16_t* block;
+        uint16_t entry;
+        uint32_t tile, addr;
+        int px, py;
+        uint8_t ci;
+
+        if (wx < 0) {
+            wx += mapW;
+        }
+        block = s->blocks[(wy >> 8) * s->width + (wx >> 8)];
+        entry = block[((wy & 255) >> 3) * 32 + ((wx & 255) >> 3)];
+        tile = entry & 0x3FF;
+        px = (entry & 0x400) ? 7 - (wx & 7) : (wx & 7);
+        py = (entry & 0x800) ? 7 - (wy & 7) : (wy & 7);
+        if (bpp8) {
+            addr = charBase + tile * 64 + py * 8 + px;
+            ci = addr < 0x10000 ? c->vram[addr] : 0;
+            line[x] = ci ? (pltt[ci] & 0x7FFF) : TRANSPARENT;
+        } else {
+            addr = charBase + tile * 32 + py * 4 + (px >> 1);
+            ci = addr < 0x10000 ? c->vram[addr] : 0;
+            ci = (px & 1) ? (ci >> 4) : (ci & 0xF);
+            line[x] = ci ? (pltt[(entry >> 12) * 16 + ci] & 0x7FFF) : TRANSPARENT;
+        }
     }
 }
 
@@ -831,6 +892,7 @@ void PpuRenderSlice(const PpuFrame* frame, int slice, int y0, int y1) {
     c->xoff = (sWidth - GBA_SCREEN_WIDTH) / 2;
     c->objs = sObjs;
     c->objCount = sObjCount;
+    c->streams = frame->streams;
 
     /* Bring the affine reference points to line y0 without drawing. */
     for (y = 0; y < y0; y++) {

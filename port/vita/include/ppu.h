@@ -8,8 +8,21 @@
 /* Number of IO register bytes the renderer needs per line (DISPCNT..BLDY). */
 #define PPU_LINE_IO_SIZE 0x60
 
+/* Max 32x32-tile blocks of a streamed map kept per background. */
+#define PPU_STREAM_MAX_BLOCKS 256
+
+/* A background the game streams from a larger map (engine.c's BgEntry). */
+typedef struct PpuBgStream {
+    int valid;
+    int width, height; /* in 256x256-pixel blocks */
+    int worldX, worldY; /* map position shown at screen (0,0) when the scroll registers equal the shadows */
+    int shadowHofs, shadowVofs;
+    const uint16_t* blocks[PPU_STREAM_MAX_BLOCKS];
+} PpuBgStream;
+
 /* Everything the renderer reads for one frame, captured by the game thread. */
 typedef struct PpuFrame {
+    PpuBgStream streams[4];
     uint8_t io[GBA_SCREEN_HEIGHT][PPU_LINE_IO_SIZE];
     uint8_t pltt[0x400];
     uint8_t oam[0x400];

@@ -326,7 +326,9 @@ def main():
         eboot = str(out_dir / "eboot.bin")
         sfo = str(out_dir / "param.sfo")
         vpk = f"build/vita/khcom_{version}_v{port_version}.vpk"
-        n.build(elf, "link", objs, variables={"libs": " ".join(libs)})
+        # Relink when vitaGL is rebuilt (e.g. with or without its splash screen).
+        n.build(elf, "link", objs, implicit=[str(Path(args.vitasdk) / "arm-vita-eabi/lib/libvitaGL.a")],
+                variables={"libs": " ".join(libs)})
         n.build(velf, "velf", elf)
         n.build(eboot, "eboot", velf)
         # APP_VER only holds XX.YY, so it carries the last two version fields.

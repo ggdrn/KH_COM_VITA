@@ -225,6 +225,9 @@ void PortVBlankWait(void) {
 
 int main(void) {
     sceIoMkdir(DATA_DIR, 0777);
+    /* Keep the previous run's log: relaunching after a crash would overwrite it. */
+    sceIoRemove(DATA_DIR "/log_prev.txt");
+    sceIoRename(LOG_PATH, DATA_DIR "/log_prev.txt");
     PortLog("KH:COM Vita port v%s starting", PORT_VERSION);
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);

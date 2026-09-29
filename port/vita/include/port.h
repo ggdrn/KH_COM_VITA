@@ -30,6 +30,11 @@ void AgbMain(void);
 
 /* One VBlank of 8-bit PCM from the m4a mixer (right = FIFO A, left = FIFO B). */
 void PortAudioPush(const int8_t* right, const int8_t* left, int samples, int rate);
+/* Streamed background map of one BG for the widescreen margins (see
+ * port/vita/game/widescreen.c); map == NULL disables it. */
+void PortSetBgStream(int bg, const void* const* map, int width, int height, int worldX, int worldY,
+                     int shadowHofs, int shadowVofs);
+void PortCaptureBgStreams(void);
 /* Frame capture for the render thread (see vita_render.c). */
 void PortCaptureLine(int y);
 void PortCaptureSubmit(void);
