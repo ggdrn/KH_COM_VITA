@@ -12,7 +12,7 @@ set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="${1:-$REPO/khcom}"
 KHCOM_URL="${KHCOM_URL:-https://github.com/Pheenoh/khcom.git}"
-KHCOM_COMMIT="54279a7c2cf176093c0313c39555a0795227e6bb"
+KHCOM_COMMIT="addf92171e56e0d774525cc5f921afb489b9afff"
 
 if [ -e "$DEST" ]; then
     echo "error: $DEST already exists" >&2

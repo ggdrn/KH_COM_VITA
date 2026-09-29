@@ -459,7 +459,7 @@ index 216638f7c..d1a6ec45c 100644
      }
  
 diff --git a/src/bos/bos_pc.c b/src/bos/bos_pc.c
-index eea8bf9cd..dd6e0579e 100644
+index 4ec760090..f4aae57e1 100644
 --- a/src/bos/bos_pc.c
 +++ b/src/bos/bos_pc.c
 @@ -1,3 +1,4 @@
@@ -467,7 +467,7 @@ index eea8bf9cd..dd6e0579e 100644
  #include "bos6.h"
  #include "sprites_bos6.h"
  #include "sprites_bos7.h"
-@@ -5240,9 +5241,9 @@ void func_0810A018(PcWork* work) {
+@@ -5239,9 +5240,9 @@ void func_0810A018(PcWork* work) {
  
      if (work->unk_00A != work->unk_00C) {
          if (work->unk_00A == 0) {
@@ -501,7 +501,7 @@ index 0e1343c52..8e8f871e6 100644
              param.unk_10 = w->x2;
              param.unk_14 = w->y2;
 diff --git a/src/btl/btl.c b/src/btl/btl.c
-index 465653e2c..bc06d7f9a 100644
+index 50853dbe8..6079f6ae9 100644
 --- a/src/btl/btl.c
 +++ b/src/btl/btl.c
 @@ -1,3 +1,6 @@
@@ -596,7 +596,7 @@ index 465653e2c..bc06d7f9a 100644
  
      if (p->unk_0E8 == 3) {
 diff --git a/src/btl/btl_actor.c b/src/btl/btl_actor.c
-index e8f040b59..774e82a1c 100644
+index ae8336a55..ca5f3f5c3 100644
 --- a/src/btl/btl_actor.c
 +++ b/src/btl/btl_actor.c
 @@ -437,7 +437,15 @@ u8 func_0800F5A4(HumWork* work, u16 interval, u16 offset, u16 width, u16 depth)
@@ -746,7 +746,7 @@ index 7ebd315a6..eae0e571e 100644
          break;
      }
 diff --git a/src/card/card_deckmenu2.c b/src/card/card_deckmenu2.c
-index 6017aae57..c1773e1ae 100644
+index a2c2f98e4..6cd5952f7 100644
 --- a/src/card/card_deckmenu2.c
 +++ b/src/card/card_deckmenu2.c
 @@ -1,3 +1,4 @@
@@ -754,7 +754,7 @@ index 6017aae57..c1773e1ae 100644
  #include "macros.h"
  #include "card_localized_data.h"
  #include "msg_localized_data.h"
-@@ -3121,7 +3122,7 @@ u8 func_08089D20(DeckMenuWork* w, void* a) {
+@@ -3117,7 +3118,7 @@ u8 func_08089D20(DeckMenuWork* w, void* a) {
      SetTaskUpdate(a, (TaskUpdateFunc)func_080889DC);
      LoadPalette(&gUnk_09614418[32],
                  (void*)(w->palette4->index * 32 +
@@ -763,7 +763,7 @@ index 6017aae57..c1773e1ae 100644
                  (u16)(w->palette4->count << 5));
      TaskPoolUpdate(&w->taskpool);
      TaskPoolUpdate(&w->cardpool);
-@@ -3424,7 +3425,7 @@ u8 func_0808A650(DeckMenuWork* w, void* a) {
+@@ -3420,7 +3421,7 @@ u8 func_0808A650(DeckMenuWork* w, void* a) {
      SetTaskUpdate(a, (TaskUpdateFunc)func_080889DC);
      LoadPalette(&gUnk_09614418[32],
                  (void*)(w->palette4->index * 32 +
@@ -772,7 +772,7 @@ index 6017aae57..c1773e1ae 100644
                  (u16)(w->palette4->count << 5));
      TaskPoolUpdate(&w->taskpool);
      TaskPoolUpdate(&w->cardpool);
-@@ -3714,7 +3715,7 @@ u8 func_0808B068(DeckMenuWork* w, void* a) {
+@@ -3710,7 +3711,7 @@ u8 func_0808B068(DeckMenuWork* w, void* a) {
      SetTaskUpdate(a, (TaskUpdateFunc)func_080889DC);
      LoadPalette(&gUnk_09614418[32],
                  (void*)(w->palette4->index * 32 +
@@ -781,7 +781,7 @@ index 6017aae57..c1773e1ae 100644
                  (u16)(w->palette4->count << 5));
      TaskPoolUpdate(&w->taskpool);
      TaskPoolUpdate(&w->cardpool);
-@@ -4438,11 +4439,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
+@@ -4434,11 +4435,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
      void* dst;
      switch (b) {
      case 0:
@@ -796,7 +796,7 @@ index 6017aae57..c1773e1ae 100644
          LoadPalette(&gUnk_09614118[0x140], dst, 32);
          LoadBgMap(0, &gUnk_09519AB8[0x180], 0x180);
          LoadBgMap(1, gUnk_0951A2B8, 0x180);
-@@ -4458,11 +4459,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
+@@ -4454,11 +4455,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
          w->unk_892 = 122;
          break;
      case 1:
@@ -811,7 +811,7 @@ index 6017aae57..c1773e1ae 100644
          LoadPalette(&gUnk_09614118[0x140], dst, 32);
          LoadBgMap(0, gUnk_09519AB8, 0x180);
          LoadBgMap(1, &gUnk_0951A2B8[0x180], 0x180);
-@@ -4478,11 +4479,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
+@@ -4474,11 +4475,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
          w->unk_892 = 122;
          break;
      case 2:
@@ -826,7 +826,7 @@ index 6017aae57..c1773e1ae 100644
          LoadPalette(&gUnk_09614118[0x120], dst, 32);
          LoadBgMap(0, gUnk_09519AB8, 0x180);
          LoadBgMap(1, gUnk_0951A2B8, 0x180);
-@@ -4765,25 +4766,25 @@ void func_0808D73C(DeckMenuWork* w, s32 id) {
+@@ -4761,25 +4762,25 @@ void func_0808D73C(DeckMenuWork* w, s32 id) {
      case 0:
          LoadPalette(gUnk_09614458,
                      (void*)(w->palette4->index * 32 +
@@ -856,7 +856,7 @@ index 6017aae57..c1773e1ae 100644
                      (u16)(w->palette4->count << 5));
          break;
      }
-@@ -5008,7 +5009,7 @@ void func_0808DD20(u8 a, u16 b) {
+@@ -5004,7 +5005,7 @@ void func_0808DD20(u8 a, u16 b) {
  
          RequestDma3Copy(gUnk_0940FAD8, dst = base + (b * 64 + 0xD20), 32);
          RequestDma3Copy(gUnk_0940FAD8, dst += 32, 32);
@@ -962,7 +962,7 @@ index 1284e7583..10fcbfdce 100644
                      SetBgMapBlocks(1, gUnk_09EE790C, 2, 1);
                      RedrawBgMapAt(1, 0, 0);
 diff --git a/src/card/card_prize_card_init.c b/src/card/card_prize_card_init.c
-index 380ce40f0..088e0cecb 100644
+index dc86386d7..f7aa3199b 100644
 --- a/src/card/card_prize_card_init.c
 +++ b/src/card/card_prize_card_init.c
 @@ -1,3 +1,4 @@
@@ -982,7 +982,7 @@ index 380ce40f0..088e0cecb 100644
          obj = AllocSpriteFrameTiles(128);
          UpdateSpriteFrameTiles(obj, gUnk_09EF1198[0], gUnk_0950C478);
 diff --git a/src/card/card_riku_tutorial.c b/src/card/card_riku_tutorial.c
-index ccfd9b044..18484b750 100644
+index d2bef495b..c65a2e4d1 100644
 --- a/src/card/card_riku_tutorial.c
 +++ b/src/card/card_riku_tutorial.c
 @@ -780,6 +780,26 @@ s32 func_080AC5E8(CardDisplayWork** cards, u8 count, u8 kind, UnkStruct_080ABA80
@@ -1058,7 +1058,7 @@ index 7ec0bf974..d4ff7fad5 100644
          LoadBgMap(w->args.bg, gUnk_09985F44, 0x800);
          LoadPalette(gCard00Palette, pal, 32);
 diff --git a/src/card/card_worldselect.c b/src/card/card_worldselect.c
-index 33f6140a1..d941330f2 100644
+index 47b14e7b8..c2cfb6402 100644
 --- a/src/card/card_worldselect.c
 +++ b/src/card/card_worldselect.c
 @@ -1,3 +1,4 @@
@@ -1879,7 +1879,7 @@ index cf261c936..71a88247c 100644
  
      gUnk_02034A18 = d;
 diff --git a/src/map/map.c b/src/map/map.c
-index 338f76562..bacdf5935 100644
+index 2556aec0a..da7dd760c 100644
 --- a/src/map/map.c
 +++ b/src/map/map.c
 @@ -1,3 +1,4 @@
@@ -1931,7 +1931,7 @@ index f63c757f8..89aeb7c64 100644
  
  void func_080D313C(void) {
 diff --git a/src/menu/mode_jiminy.c b/src/menu/mode_jiminy.c
-index d0b44623c..e47457697 100644
+index 26f7867c4..d538f6bb9 100644
 --- a/src/menu/mode_jiminy.c
 +++ b/src/menu/mode_jiminy.c
 @@ -1,3 +1,4 @@
@@ -1939,7 +1939,7 @@ index d0b44623c..e47457697 100644
  #include "sprites_msg.h"
  #include "jiminy_journal.h"
  #include "sprites_bos5.h"
-@@ -2459,16 +2460,16 @@ void func_0805BAE4(void) {
+@@ -2375,16 +2376,16 @@ void func_0805BAE4(void) {
                  (u8*)GetBgCharBase(3) + 0x4000, gJiminyWork->detail->tileSize);
              switch ((u16)gJiminyWork->detail->paletteSize) {
              case 0x60:
@@ -2350,7 +2350,7 @@ index 29d22733b..430104bfe 100644
      }
  
 diff --git a/src/sio/mode_sio.c b/src/sio/mode_sio.c
-index 5f222b3a5..042ab4094 100644
+index 34ea304b1..d041e11b9 100644
 --- a/src/sio/mode_sio.c
 +++ b/src/sio/mode_sio.c
 @@ -1,3 +1,4 @@
@@ -2358,7 +2358,7 @@ index 5f222b3a5..042ab4094 100644
  #include "macros.h"
  #include "mode_sio_dbg.h"
  #include "mode_chkobj_assets.h"
-@@ -1122,12 +1123,12 @@ void func_080B0010(void) {
+@@ -1121,12 +1122,12 @@ void func_080B0010(void) {
                  gSioBtlOptionWork->unk_410++;
              } else {
                  gSioBtlOptionWork->unk_004 += 8;
@@ -2373,7 +2373,7 @@ index 5f222b3a5..042ab4094 100644
  #ifdef VERSION_EU
          eu_080059F4(2, gSioWorldEntries[b].map);
  #else
-@@ -1158,9 +1159,9 @@ void func_080B0010(void) {
+@@ -1157,9 +1158,9 @@ void func_080B0010(void) {
              } else {
                  gSioBtlOptionWork->unk_004 -= 8;
                  if (gSioBtlOptionWork->unk_004 == 0) {
@@ -2385,7 +2385,7 @@ index 5f222b3a5..042ab4094 100644
                  }
              }
          }
-@@ -1396,7 +1397,7 @@ void func_080B0634(void) {
+@@ -1395,7 +1396,7 @@ void func_080B0634(void) {
      if (gUnk_0203A9E4 == 0) {
  #endif
      if (gUnk_02039810[1][0] == 0x2FCF) {
@@ -2394,7 +2394,7 @@ index 5f222b3a5..042ab4094 100644
  
          if (gSioBtlOptionWork->unk_217 == 0) {
              SetSioBtlOptionAnimation(0, 1, 1);
-@@ -1405,7 +1406,7 @@ void func_080B0634(void) {
+@@ -1404,7 +1405,7 @@ void func_080B0634(void) {
      }
  
      if (gUnk_02039810[1][1] == 0x6AD6) {
@@ -2403,7 +2403,7 @@ index 5f222b3a5..042ab4094 100644
  
          if (gSioBtlOptionWork->unk_218 == 0) {
              SetSioBtlOptionAnimation(1, 1, 1);
-@@ -1415,7 +1416,7 @@ void func_080B0634(void) {
+@@ -1414,7 +1415,7 @@ void func_080B0634(void) {
  #ifdef VERSION_EU
      } else {
      if (gUnkEu_0203B108[0] == 1) {
@@ -2412,7 +2412,7 @@ index 5f222b3a5..042ab4094 100644
  
          if (gSioBtlOptionWork->unk_217 == 0) {
              SetSioBtlOptionAnimation(0, 1, 1);
-@@ -1424,7 +1425,7 @@ void func_080B0634(void) {
+@@ -1423,7 +1424,7 @@ void func_080B0634(void) {
      }
  
      if (gUnkEu_0203B108[1] == 1) {
@@ -2421,7 +2421,7 @@ index 5f222b3a5..042ab4094 100644
  
          if (gSioBtlOptionWork->unk_218 == 0) {
              SetSioBtlOptionAnimation(1, 1, 1);
-@@ -1621,20 +1622,20 @@ void func_080B09C0(void) {
+@@ -1620,20 +1621,20 @@ void func_080B09C0(void) {
      digits[1] = a / 10;
      a %= 10;
      digits[2] = a;
@@ -2450,7 +2450,7 @@ index 5f222b3a5..042ab4094 100644
  
      digits[0] = e / 1000;
      e %= 1000;
-@@ -1643,10 +1644,10 @@ void func_080B09C0(void) {
+@@ -1642,10 +1643,10 @@ void func_080B09C0(void) {
      digits[2] = e / 10;
      e %= 10;
      digits[3] = e;
@@ -2465,7 +2465,7 @@ index 5f222b3a5..042ab4094 100644
  
      digits[0] = g / 1000;
      g %= 1000;
-@@ -1655,30 +1656,30 @@ void func_080B09C0(void) {
+@@ -1654,30 +1655,30 @@ void func_080B09C0(void) {
      digits[2] = g / 10;
      g %= 10;
      digits[3] = g;
@@ -2508,7 +2508,7 @@ index 5f222b3a5..042ab4094 100644
  
      digits[0] = f / 1000;
      f %= 1000;
-@@ -1687,10 +1688,10 @@ void func_080B09C0(void) {
+@@ -1686,10 +1687,10 @@ void func_080B09C0(void) {
      digits[2] = f / 10;
      f %= 10;
      digits[3] = f;
@@ -2523,7 +2523,7 @@ index 5f222b3a5..042ab4094 100644
  
      digits[0] = h / 1000;
      h %= 1000;
-@@ -1699,10 +1700,10 @@ void func_080B09C0(void) {
+@@ -1698,10 +1699,10 @@ void func_080B09C0(void) {
      digits[2] = h / 10;
      h %= 10;
      digits[3] = h;
@@ -2538,7 +2538,7 @@ index 5f222b3a5..042ab4094 100644
  }
  void func_080B0F18(void) {
      s8* base;
-@@ -1789,19 +1790,19 @@ void func_080B1134(u16 a, u16 b) {
+@@ -1788,19 +1789,19 @@ void func_080B1134(u16 a, u16 b) {
      case 3:
      case 4:
      case 5:
@@ -2563,7 +2563,7 @@ index 5f222b3a5..042ab4094 100644
          break;
      }
  
-@@ -1811,27 +1812,27 @@ void func_080B1134(u16 a, u16 b) {
+@@ -1810,27 +1811,27 @@ void func_080B1134(u16 a, u16 b) {
      case 3:
      case 4:
      case 5:
@@ -2598,7 +2598,7 @@ index 5f222b3a5..042ab4094 100644
      gSioBtlOptionWork->unk_217 = 0;
      gSioBtlOptionWork->unk_218 = 0;
      SetSioBtlOptionAnimation(0, 0, 0);
-@@ -2580,7 +2581,7 @@ void func_080B2480(void) {
+@@ -2579,7 +2580,7 @@ void func_080B2480(void) {
              SetSioChgCardAnimation(0, 1, 0);
              m4aSongNumStart(SONG_SYS_KETTEI);
          }
@@ -2607,7 +2607,7 @@ index 5f222b3a5..042ab4094 100644
          gUnk_0203AB34[0] = 1;
      } else if (gUnk_02039810[1][0] == 0x2B9A) {
          if (gUnk_0203AB34[0] == 1) {
-@@ -2588,7 +2589,7 @@ void func_080B2480(void) {
+@@ -2587,7 +2588,7 @@ void func_080B2480(void) {
              m4aSongNumStart(SONG_SYS_CLOSE);
              gSioChgCardWork->unk_20C = 0;
          }
@@ -2616,7 +2616,7 @@ index 5f222b3a5..042ab4094 100644
          gUnk_0203AB34[0] = 0;
      }
  
-@@ -2597,7 +2598,7 @@ void func_080B2480(void) {
+@@ -2596,7 +2597,7 @@ void func_080B2480(void) {
              SetSioChgCardAnimation(1, 1, 0);
              m4aSongNumStart(SONG_SYS_KETTEI);
          }
@@ -2625,7 +2625,7 @@ index 5f222b3a5..042ab4094 100644
          gUnk_0203AB34[1] = 1;
      } else if (gUnk_02039810[1][1] == 0x2B9A) {
          if (gUnk_0203AB34[1] == 1) {
-@@ -2605,7 +2606,7 @@ void func_080B2480(void) {
+@@ -2604,7 +2605,7 @@ void func_080B2480(void) {
              m4aSongNumStart(SONG_SYS_CLOSE);
              gSioChgCardWork->unk_20C = 0;
          }
@@ -2634,7 +2634,7 @@ index 5f222b3a5..042ab4094 100644
          gUnk_0203AB34[1] = 0;
      }
  
-@@ -2961,9 +2962,9 @@ void func_080B3204(void) {
+@@ -2960,9 +2961,9 @@ void func_080B3204(void) {
      digits[1] = v / 10;
      v = v % 10;
      digits[2] = v;
@@ -2647,7 +2647,7 @@ index 5f222b3a5..042ab4094 100644
  
      sum = 0;
      for (j = 5; j < 10; j++) {
-@@ -2978,9 +2979,9 @@ void func_080B3204(void) {
+@@ -2977,9 +2978,9 @@ void func_080B3204(void) {
      digits[1] = v / 10;
      v = v % 10;
      digits[2] = v;
@@ -2660,7 +2660,7 @@ index 5f222b3a5..042ab4094 100644
  }
  
  void func_080B3354(void) {
-@@ -3120,20 +3121,20 @@ void func_080B3354(void) {
+@@ -3119,20 +3120,20 @@ void func_080B3354(void) {
          gSioChgCardWork->unk_074 = 0;
  
          if (gFrameCounter % 10 == 0) {
@@ -2685,7 +2685,7 @@ index 5f222b3a5..042ab4094 100644
      }
  }
  
-@@ -3186,7 +3187,7 @@ void func_080B397C(void) {
+@@ -3185,7 +3186,7 @@ void func_080B397C(void) {
      defs = gCardDefs;
      def = &defs[n];
      off = def->unk_2A << 5;
@@ -2694,7 +2694,7 @@ index 5f222b3a5..042ab4094 100644
      LoadObjPaletteBank(((ObjPalette*)gSioChgCardWork->palette)->index, gUnk_096FBF04 + off);
      nameId = def->unk_1C;
      defs = (CardDef*)&defs->name;
-@@ -3221,8 +3222,8 @@ void func_080B3A68(void) {
+@@ -3220,8 +3221,8 @@ void func_080B3A68(void) {
      gSioChgCardWork->unk_202 = gUnk_0203AB20[gSioChgCardWork->unk_076];
      SetSioChgCardAnimation(0, 0, 0);
      SetSioChgCardAnimation(1, 0, 0);
@@ -3061,7 +3061,7 @@ index 86313bbf8..8116ce4da 100644
  
          if (gDmaStream.update != 0) {
 diff --git a/src/taskpool.c b/src/taskpool.c
-index 36112797c..b78fde46a 100644
+index 8bfb8069d..b83ecb69e 100644
 --- a/src/taskpool.c
 +++ b/src/taskpool.c
 @@ -1,3 +1,7 @@
@@ -3076,8 +3076,8 @@ index 36112797c..b78fde46a 100644
  
  void ModeBlankDisplay(void) {
      REG_DISPCNT &= ~(DISPCNT_BG_ALL_ON | DISPCNT_OBJ_ON);
--    *(vu16*)0x05000000 = gUnk_0300749E;
-+    *(vu16*)HW_PLTT(0x0) = gUnk_0300749E;
+-    *(vu16*)0x05000000 = gModeBlankColor;
++    *(vu16*)HW_PLTT(0x0) = gModeBlankColor;
  }
  
  void ModeStart(Mode* mode, s32 arg) {

@@ -28,6 +28,7 @@ import ninja_syntax  # noqa: E402
 from asset_objects import materialize_assets  # noqa: E402
 from assetgen import plan as asset_plan  # noqa: E402
 from regional_data import asset_symbols, load_sidecars  # noqa: E402
+from textgen import load_pools as load_text_pools  # noqa: E402
 
 VERSIONS = {"us": "B8CE", "jp": "B8CJ", "eu": "B8CP"}
 
@@ -247,6 +248,8 @@ def main():
     listed = {l.split()[0] for l in units_file.read_text().splitlines() if l.strip() and not l.startswith("#")}
     groups = {g: v for g, v in groups.items() if not v["objects"] or any(u in listed for u in v["objects"])}
     generated = {u: (g, unit) for g, v in groups.items() for u, unit in v["objects"].items()}
+    text_pools = load_text_pools()
+    text_objects = {p.object(version)["name"]: p for p in text_pools if p.object(version) is not None}
 
     sources = {p.name: p for p in sorted(Path("src").rglob("*.c"))}
     units = []
@@ -257,7 +260,7 @@ def main():
         name = line.split()[0]
         if name in REPLACED_UNITS:
             continue
-        if name in generated:
+        if name in generated or name in text_objects:
             src = Path(f"{gba_build}/gen") / name
             obj = out_dir / "gen" / (src.stem + ".o")
         elif name.endswith(".c"):
@@ -308,6 +311,8 @@ def main():
         n.rule("as", "$as $asflags -o $out $in", description="AS $out")
         n.rule("assetgen", "python3 tools/assetgen.py $version $manifest", description="ASSETGEN $manifest",
                restat=True)
+        n.rule("textgen", "python3 tools/textgen.py $version $manifest", description="TEXTGEN $manifest",
+               restat=True)
         n.rule("link", "$cc -Wl,-q -Wl,--no-warn-rwx-segments -o $out @$out.rsp $libs"
                " && python3 tools/vita/fix_abs_symbols.py $out",
                rspfile="$out.rsp", rspfile_content="$in", description="LINK $out")
@@ -322,11 +327,20 @@ def main():
         for g in groups.values():
             outputs = [os.path.relpath(u["source"]) for u in g["objects"].values()] + [os.path.relpath(g["header"])]
             n.build(outputs, "assetgen",
-                    implicit=manifests + ["tools/assetgen.py", "tools/sprite_sheet.py", "tools/gbagfx/gbagfx"]
+                    implicit=manifests + ["tools/assetgen.py", "tools/m4a_assets.py", "tools/sprite_sheet.py",
+                                          "tools/gbagfx/gbagfx"]
                     + [os.path.relpath(p) for p in g["sources"]],
                     implicit_outputs=[os.path.relpath(p) for p in g["binaries"]],
                     variables={"version": version, "manifest": os.path.relpath(g["manifest"].path)})
-        gen_headers = sorted(os.path.relpath(g["header"]) for g in groups.values())
+        for pool in text_pools:
+            n.build([os.path.relpath(p) for p in pool.outputs(version)], "textgen",
+                    implicit=[os.path.relpath(pool.path), f"config/charmaps/{version}.yaml", "tools/textgen.py"]
+                    + ([os.path.relpath(pool.source(version))] if pool.present(version) else []),
+                    variables={"version": version, "manifest": os.path.relpath(pool.path)})
+        # Generated headers and the text fragments C sources #include.
+        gen_headers = sorted([os.path.relpath(g["header"]) for g in groups.values()]
+                             + [os.path.relpath(p) for pool in text_pools
+                                for p in [pool.header(version)] + pool.fragment_paths(version)])
 
         objs = []
         n.rule("relocate", f"python3 tools/vita/relocate_gen_c.py $in $out build/{version}/com_{version}.elf "
