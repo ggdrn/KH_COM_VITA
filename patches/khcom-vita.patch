@@ -1,0 +1,3023 @@
+diff --git a/.gitignore b/.gitignore
+index 1d11559c..6eba0b0e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -45,3 +45,9 @@ tools/gbagfx/
+ # Local-only MovieOpen encoder RE (not matching path)
+ tools/gfx/movie_open_re.py
+ tools/_tmp_movie_encode_re.md
++.venv/
++tools/legacy/
++build.vita.ninja
++.ninja_log
++port/vita/libshacccg.suprx
++build/vita/*.psp2dmp
+diff --git a/include/gba/hwaddr.h b/include/gba/hwaddr.h
+new file mode 100644
+index 00000000..bf065830
+--- /dev/null
++++ b/include/gba/hwaddr.h
+@@ -0,0 +1,25 @@
++#ifndef GUARD_GBA_HWADDR_H
++#define GUARD_GBA_HWADDR_H
++
++/*
++ * Addresses of GBA memory-mapped hardware. On the GBA these are the fixed bus
++ * addresses; on other platforms they point into emulated buffers owned by the
++ * platform layer. The integer type matches the original literals.
++ */
++#ifdef PLATFORM_VITA
++extern unsigned char gGbaPltt[0x400];
++extern unsigned char gGbaVram[0x18000];
++extern unsigned char gGbaOam[0x400];
++extern unsigned char gGbaSram[0x10000];
++#define HW_PLTT(off) ((int)gGbaPltt + (off))
++#define HW_VRAM(off) ((int)gGbaVram + (off))
++#define HW_OAM(off) ((int)gGbaOam + (off))
++#define HW_SRAM(off) ((int)gGbaSram + (off))
++#else
++#define HW_PLTT(off) (0x05000000 + (off))
++#define HW_VRAM(off) (0x06000000 + (off))
++#define HW_OAM(off) (0x07000000 + (off))
++#define HW_SRAM(off) (0x0E000000 + (off))
++#endif
++
++#endif /* GUARD_GBA_HWADDR_H */
+diff --git a/include/gba/io_reg.h b/include/gba/io_reg.h
+index 61b35ffe..5ecbc8a3 100644
+--- a/include/gba/io_reg.h
++++ b/include/gba/io_reg.h
+@@ -3,7 +3,16 @@
+ 
+ #include "types.h"
+ 
++#ifdef PLATFORM_VITA
++extern unsigned char gGbaIo[0x400];
++void GbaDmaReadback(volatile void* reg);
++#define REG_BASE ((int)gGbaIo)
++/* A DMA control write followed by this read starts the emulated transfer. */
++#define DMA_READBACK(dma, i) GbaDmaReadback(&(dma)[i])
++#else
+ #define REG_BASE 0x04000000
++#define DMA_READBACK(dma, i) (dma)[i]
++#endif
+ 
+ #define REG_OFFSET_DISPCNT     0x0
+ #define REG_OFFSET_DISPSTAT    0x4
+diff --git a/include/gba/romptr.h b/include/gba/romptr.h
+new file mode 100644
+index 00000000..a1f5d755
+--- /dev/null
++++ b/include/gba/romptr.h
+@@ -0,0 +1,16 @@
++#ifndef GUARD_GBA_ROMPTR_H
++#define GUARD_GBA_ROMPTR_H
++
++/*
++ * Pointers stored inside binary ROM data (song streams, voicegroups, ...) are
++ * GBA bus addresses. GBA_PTR() is the identity on the GBA; on other platforms
++ * it maps such an address to where that data was loaded.
++ */
++#ifdef PLATFORM_VITA
++void* GbaPtr(const void* p);
++#define GBA_PTR(p) ((__typeof__(p))GbaPtr(p))
++#else
++#define GBA_PTR(p) (p)
++#endif
++
++#endif /* GUARD_GBA_ROMPTR_H */
+diff --git a/include/m4a.h b/include/m4a.h
+index b3a5a55a..374f479b 100644
+--- a/include/m4a.h
++++ b/include/m4a.h
+@@ -59,8 +59,14 @@
+ #define FADE_VOL_MAX   64
+ #define FADE_VOL_SHIFT 2
+ 
++#ifdef PLATFORM_VITA
++/* Link-time constants on the GBA; the values are the same in every version. */
++#define NUM_MUSIC_PLAYERS 0x1A
++#define MAX_LINES 0x50
++#else
+ #define NUM_MUSIC_PLAYERS ((u16)gNumMusicPlayers)
+ #define MAX_LINES ((u32)gMaxLines)
++#endif
+ 
+ #define CpuCopy32(src, dest, size) CpuSet(src, dest, ((size) / 4) | CPU_SET_32BIT)
+ #define CpuFill32(value, dest, size)                                              \
+diff --git a/include/save.h b/include/save.h
+index d10e3bb9..ab437556 100644
+--- a/include/save.h
++++ b/include/save.h
+@@ -4,15 +4,16 @@
+ #include "save_api.h"
+ 
+ #include "types.h"
++#include "gba/hwaddr.h"
+ #include "save_types.h"
+ #include "malloc.h"
+ #include "card.h"
+ 
+ extern u8 gSramFileLarge[];
+ 
+-#define SRAM_HEADER ((u8*)0x0E000010)
+-#define SRAM_SYSTEM ((u8*)0x0E000090)
+-#define SRAM_FILE_SMALL ((u8*)0x0E001EC0)
++#define SRAM_HEADER ((u8*)HW_SRAM(0x10))
++#define SRAM_SYSTEM ((u8*)HW_SRAM(0x90))
++#define SRAM_FILE_SMALL ((u8*)HW_SRAM(0x1EC0))
+ 
+ #define SAVE_HEADER_SIZE 0x40
+ #define SAVE_SYSTEM_SIZE 0xF14
+diff --git a/include/types.h b/include/types.h
+index 4296f31f21..a9ba2f13 100644
+--- a/include/types.h
++++ b/include/types.h
+@@ -8,8 +8,14 @@ typedef unsigned int u32;
+ typedef signed char s8;
+ typedef signed short s16;
+ typedef signed int s32;
++#ifdef PLATFORM_VITA
++/* agbcc aligns 64-bit integers to 4 bytes; keep the original struct layouts. */
++typedef unsigned long long u64 __attribute__((aligned(4)));
++typedef signed long long s64 __attribute__((aligned(4)));
++#else
+ typedef unsigned long long u64;
+ typedef signed long long s64;
++#endif
+ 
+ typedef volatile u8 vu8;
+ typedef volatile u16 vu16;
+diff --git a/src/bos/bos5.c b/src/bos/bos5.c
+index 4beaab3b..a21acb66 100644
+--- a/src/bos/bos5.c
++++ b/src/bos/bos5.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "registration_data.h"
+ #include "system_state.h"
+ #include "map_api.h"
+@@ -2653,9 +2654,9 @@ u8 func_080FABE4(GaWork* work) {
+                 e = &work->entries[i];
+                 switch (i) {
+                 case 0:
+-                    param.unk_00 = 0x06010000 + (e->tiles->index << 5);
++                    param.unk_00 = HW_VRAM(0x10000) + (e->tiles->index << 5);
+                     param.unk_04 = e->tiles->count;
+-                    param.unk_08 = 0x06010000 + (work->tiles->index << 5);
++                    param.unk_08 = HW_VRAM(0x10000) + (work->tiles->index << 5);
+                     param.unk_0C = work->tiles->count;
+                     param.unk_30 = e->unk_124 + (work->unk_018 == 0 ? -0x700 : 0x700);
+                     param.unk_34 = e->unk_128;
+@@ -2663,12 +2664,12 @@ u8 func_080FABE4(GaWork* work) {
+                     param.unk_40 = &e->actor;
+                     break;
+                 case 1:
+-                    param.unk_10 = 0x06010000 + (e->tiles->index << 5);
++                    param.unk_10 = HW_VRAM(0x10000) + (e->tiles->index << 5);
+                     param.unk_14 = e->tiles->count;
+                     break;
+                 }
+             }
+-            param.unk_18 = 0x05000200 + (work->palette->index << 5);
++            param.unk_18 = HW_PLTT(0x200) + (work->palette->index << 5);
+             param.unk_1C = work->palette->count << 5;
+             param.unk_20 = 0;
+             param.unk_24 = 0;
+@@ -3761,7 +3762,7 @@ void task_bos_md_0(MdWork* work, void* arg) {
+ 
+     func_080FB930(work, 0);
+     MdAnimStart(work, 0);
+-    LoadPalette(gUnk_09A3C97C, (void*)0x05000000, 32);
++    LoadPalette(gUnk_09A3C97C, (void*)HW_PLTT(0x0), 32);
+     func_0801C298(0, 1);
+     work->unk_028 = gUnk_09A3C97C;
+     work->palette = LoadObjPalette(gUnk_09A3C97C, 32);
+@@ -3850,14 +3851,14 @@ void task_bos_md_2(MdWork* work) {
+ 
+     if (func_0801CA00(&work->sub[0]) != 0) {
+         if (work->unk_028 != gUnk_08F69BC4) {
+-            LoadPalette(gUnk_08F69BC4, (void*)0x05000000, 32);
++            LoadPalette(gUnk_08F69BC4, (void*)HW_PLTT(0x0), 32);
+             work->unk_028 = gUnk_08F69BC4;
+         }
+ 
+         pal = work->palette2;
+     } else {
+         if (work->unk_028 != gUnk_09A3C97C) {
+-            LoadPalette(gUnk_09A3C97C, (void*)0x05000000, 32);
++            LoadPalette(gUnk_09A3C97C, (void*)HW_PLTT(0x0), 32);
+             work->unk_028 = gUnk_09A3C97C;
+         }
+ 
+@@ -4498,7 +4499,7 @@ void func_080FDB1C(s16 model, s16 n) {
+     dma[0] = (vu32)zp;
+     dma[1] = (vu32)gUnk_020350BC;
+     dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x360;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+ 
+     if (n > 0) {
+ #ifdef VERSION_EU
+@@ -4512,31 +4513,31 @@ void func_080FDB1C(s16 model, s16 n) {
+         dma[1] = (vu32)dst;
+         ctrl = (n << 4) | (DMA_ENABLE << 16);
+         dma[2] = ctrl;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         src2 = src + (18 - n) * 32;
+         dma[0] = (vu32)src2;
+         dma[1] = (vu32)((u8*)gUnk_020350BC + 288);
+         dma[2] = ctrl;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         dma[0] = (vu32)(src + 576);
+         dma[1] = (vu32)(dst + 576);
+         dma[2] = ctrl;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         dma[0] = (vu32)(src2 + 576);
+         dma[1] = (vu32)((u8*)gUnk_020350BC + 864);
+         dma[2] = ctrl;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         src += 1152;
+         dma[0] = (vu32)src;
+         dst += 1152;
+         dma[1] = (vu32)dst;
+         dma[2] = ctrl;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         src2 += 1152;
+         dma[0] = (vu32)src2;
+         dma[1] = (vu32)((u8*)gUnk_020350BC + 1440);
+         dma[2] = ctrl;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+     }
+ 
+     RequestDma3Copy(gUnk_020350BC, (u8*)GetBgCharBase(0) + 1024, 0x6C0);
+@@ -4922,7 +4923,7 @@ void func_080FE900(void) {
+             gUnk_020350F4 = 0;
+         }
+ 
+-        LoadPalette(gUnk_09EF8F24[(s16)gUnk_020350F4], (void*)0x05000040, 32);
++        LoadPalette(gUnk_09EF8F24[(s16)gUnk_020350F4], (void*)HW_PLTT(0x40), 32);
+     }
+ }
+ 
+diff --git a/src/bos/bos_dsd_main.c b/src/bos/bos_dsd_main.c
+index bd91aca9..fdd62fe0 100644
+--- a/src/bos/bos_dsd_main.c
++++ b/src/bos/bos_dsd_main.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "bos2.h"
+ #include "boss_map_block_assets.h"
+ #include "sprites_bos2.h"
+@@ -130,14 +131,14 @@ void task_bos_dsd_main_2(DsdMainWork* work) {
+     s16 y;
+ 
+     if (gBtlWork->unk_070 != 0) {
+-        LoadPaletteWithEffect(gUnk_096FB744, (void*)0x05000000, 32);
++        LoadPaletteWithEffect(gUnk_096FB744, (void*)HW_PLTT(0x0), 32);
+         gfx = work->palette;
+     } else if (d->flags & 1) {
+         if (gFrameCounter & 1) {
+-            LoadPaletteWithEffect(gUnk_08F69BC4, (void*)0x05000000, 32);
++            LoadPaletteWithEffect(gUnk_08F69BC4, (void*)HW_PLTT(0x0), 32);
+             gfx = work->palette2;
+         } else {
+-            LoadPaletteWithEffect(gUnk_096FB744, (void*)0x05000000, 32);
++            LoadPaletteWithEffect(gUnk_096FB744, (void*)HW_PLTT(0x0), 32);
+             gfx = work->palette;
+         }
+     } else {
+@@ -855,7 +856,7 @@ void func_080C3754(DsdMainWork* work) {
+         break;
+     case 2:
+         func_080C3504(work);
+-        LoadPalette(gUnk_096FB744, (void*)0x05000000, 32);
++        LoadPalette(gUnk_096FB744, (void*)HW_PLTT(0x0), 32);
+         work->unk_06C = TaskCreate(&work->tasks, &gTaskDescBosDsdEnergy2, work->dsd);
+         work->dsd->unk_350++;
+         break;
+diff --git a/src/bos/bos_jf.c b/src/bos/bos_jf.c
+index b026311e..fc047d67 100644
+--- a/src/bos/bos_jf.c
++++ b/src/bos/bos_jf.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "bos2.h"
+ #include "sprites_bos2.h"
+@@ -162,7 +163,7 @@ u8 task_bos_jf_1(JfWork* work) {
+         if (--work->unk_242 <= 0) {
+             work->unk_240 = 0;
+             work->flags &= ~1;
+-            LoadPaletteWithEffect(gUnk_096FB584, (void*)0x05000000, 32);
++            LoadPaletteWithEffect(gUnk_096FB584, (void*)HW_PLTT(0x0), 32);
+             func_0801AF08(sub);
+ 
+             if (sub->unk_02C > 0) {
+@@ -567,7 +568,7 @@ u8 task_bos_jf_map_1(JfMapWork* work) {
+             work->unk_02 = 0;
+         }
+ 
+-        LoadPalette(gUnk_096FB484 + work->unk_02 * 32, (void*)0x05000020, 0x20);
++        LoadPalette(gUnk_096FB484 + work->unk_02 * 32, (void*)HW_PLTT(0x20), 0x20);
+     }
+ 
+     func_0802F208();
+diff --git a/src/bos/bos_jf_majin.c b/src/bos/bos_jf_majin.c
+index d8b9c62e..4bd3c451 100644
+--- a/src/bos/bos_jf_majin.c
++++ b/src/bos/bos_jf_majin.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "bos2.h"
+ #include "sprites_bos2.h"
+@@ -177,17 +178,17 @@ void task_bos_jf_majin_2(JfMajinWork* work) {
+     if (gBtlWork->unk_070 == 0) {
+         if (jf->flags & 1) {
+             if (gFrameCounter & 1) {
+-                LoadPaletteWithEffect(gUnk_08F69BC4, (void*)0x05000000, 32);
++                LoadPaletteWithEffect(gUnk_08F69BC4, (void*)HW_PLTT(0x0), 32);
+                 gfx = work->palette2;
+             } else {
+-                LoadPaletteWithEffect(gUnk_096FB584, (void*)0x05000000, 32);
++                LoadPaletteWithEffect(gUnk_096FB584, (void*)HW_PLTT(0x0), 32);
+                 gfx = work->palette;
+             }
+         } else {
+             gfx = work->palette;
+         }
+     } else {
+-        LoadPaletteWithEffect(gUnk_096FB584, (void*)0x05000000, 32);
++        LoadPaletteWithEffect(gUnk_096FB584, (void*)HW_PLTT(0x0), 32);
+         gfx = work->palette;
+     }
+ 
+@@ -2048,7 +2049,7 @@ u8 task_bos_dsd_1(DsdWork* work) {
+         if ((s16)work->timer <= 0) {
+             work->unk_34C = 0;
+             work->flags &= ~1;
+-            LoadPaletteWithEffect(gUnk_096FB744, (void*)0x05000000, 32);
++            LoadPaletteWithEffect(gUnk_096FB744, (void*)HW_PLTT(0x0), 32);
+             func_0801AF08(b);
+ 
+             if (b->unk_02C > 0) {
+diff --git a/src/bos/bos_lst.c b/src/bos/bos_lst.c
+index f47057d3..e0d93046 100644
+--- a/src/bos/bos_lst.c
++++ b/src/bos/bos_lst.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "bos6.h"
+ #include "sprites_bos6.h"
+ #include "gba/io_reg.h"
+@@ -2252,15 +2253,15 @@ void task_bos_lst_2(BosLstWork* work) {
+     }
+     if ((s16)work->unk_014 != (s16)work->unk_016) {
+         if ((s16)work->unk_014 == 0) {
+-            LoadPalette(gUnk_09D69454, (void*)0x05000000, 0x60);
+-            LoadPalette(gUnk_09D69594, (void*)(0x05000200 + ((work->palette->index & 15) << 5)), 0x60);
++            LoadPalette(gUnk_09D69454, (void*)HW_PLTT(0x0), 0x60);
++            LoadPalette(gUnk_09D69594, (void*)(HW_PLTT(0x200) + ((work->palette->index & 15) << 5)), 0x60);
+         } else {
+-            LoadPalette(gUnk_08F69BC4, (void*)0x05000000, 32);
+-            LoadPalette(gUnk_08F69BC4, (void*)0x05000020, 32);
+-            LoadPalette(gUnk_08F69BC4, (void*)0x05000040, 32);
+-            LoadPalette(gUnk_08F69BC4, (void*)(0x05000200 + ((work->palette->index & 15) << 5)), 32);
+-            LoadPalette(gUnk_08F69BC4, (void*)(0x05000220 + ((work->palette->index & 15) << 5)), 32);
+-            LoadPalette(gUnk_08F69BC4, (void*)(0x05000240 + ((work->palette->index & 15) << 5)), 32);
++            LoadPalette(gUnk_08F69BC4, (void*)HW_PLTT(0x0), 32);
++            LoadPalette(gUnk_08F69BC4, (void*)HW_PLTT(0x20), 32);
++            LoadPalette(gUnk_08F69BC4, (void*)HW_PLTT(0x40), 32);
++            LoadPalette(gUnk_08F69BC4, (void*)(HW_PLTT(0x200) + ((work->palette->index & 15) << 5)), 32);
++            LoadPalette(gUnk_08F69BC4, (void*)(HW_PLTT(0x220) + ((work->palette->index & 15) << 5)), 32);
++            LoadPalette(gUnk_08F69BC4, (void*)(HW_PLTT(0x240) + ((work->palette->index & 15) << 5)), 32);
+         }
+         work->unk_016 = work->unk_014;
+     }
+@@ -2320,12 +2321,12 @@ void task_bos_lst_2(BosLstWork* work) {
+         dma[0] = (u32)gLstAnimDefs[anim].unk_00;
+         dma[1] = (u32)work->unk_8A4;
+         dma[2] = (DMA_ENABLE << 16) | 0x400;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         src = gUnk_09A4D194[n][1];
+         dma[0] = (u32)src;
+         dma[1] = (u32)work->unk_8A4;
+         dma[2] = (DMA_ENABLE << 16) | 0x140;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         if (work->unk_012 > 0) {
+             dma[0] = (u32)(src + 160);
+             dma[1] = (u32)work->unk_B24;
+@@ -2334,7 +2335,7 @@ void task_bos_lst_2(BosLstWork* work) {
+             dma[1] = (u32)work->unk_B48;
+         }
+         dma[2] = (DMA_ENABLE << 16) | 0xE;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         if (sy < 0) {
+             fill = 0;
+             CpuFastSet(&fill, work->unk_8A4, ((((-sy) >> 3) << 4) & 0x1FFFFF) | 0x1000000);
+diff --git a/src/bos/bos_lst_fld.c b/src/bos/bos_lst_fld.c
+index 216638f7..d1a6ec45 100644
+--- a/src/bos/bos_lst_fld.c
++++ b/src/bos/bos_lst_fld.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "bos7.h"
+ #include "sprites_bos7.h"
+ #include "sprites_bos6.h"
+@@ -470,11 +471,11 @@ void task_bos_lst_fld_0(LstFldWork* work, LstFldArg* arg) {
+     dma[0] = (vu32)gUnk_09A4D234;
+     dma[1] = (vu32)work->unk_0C4;
+     dma[2] = (DMA_ENABLE << 16) | 0x340;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     dma[0] = (vu32)gUnk_09A4F2B4;
+     dma[1] = (vu32)work->unk_744;
+     dma[2] = (DMA_ENABLE << 16) | 0x4A0;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+ 
+     for (i = 0; i < 0x1A0; i++) {
+         work->unk_0C4[i] = (gSineTable[(i + 64) & 255] >> 1) & 0x1FF;
+@@ -683,7 +684,7 @@ u8 task_bos_lst_fld_1(LstFldWork* work) {
+ 
+     if (work->unk_008 <= 63) {
+         func_08110058(work->unk_024, gUnk_09D694F4, 80, gUnk_09A4FC20[work->unk_008]);
+-        LoadPalette(work->unk_024, 0x050000A0, 160);
++        LoadPalette(work->unk_024, HW_PLTT(0xA0), 160);
+         work->unk_008++;
+     }
+ 
+diff --git a/src/bos/bos_pc.c b/src/bos/bos_pc.c
+index eea8bf9c..dd6e0579 100644
+--- a/src/bos/bos_pc.c
++++ b/src/bos/bos_pc.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "bos6.h"
+ #include "sprites_bos6.h"
+ #include "sprites_bos7.h"
+@@ -5240,9 +5241,9 @@ void func_0810A018(PcWork* work) {
+ 
+     if (work->unk_00A != work->unk_00C) {
+         if (work->unk_00A == 0) {
+-            LoadPalette(gBosPcBgPalette, (void*)0x05000000, 32);
++            LoadPalette(gBosPcBgPalette, (void*)HW_PLTT(0x0), 32);
+         } else {
+-            LoadPalette(gUnk_08F69BC4, (void*)0x05000000, 32);
++            LoadPalette(gUnk_08F69BC4, (void*)HW_PLTT(0x0), 32);
+         }
+         work->unk_00C = work->unk_00A;
+     }
+diff --git a/src/bos/bos_tm.c b/src/bos/bos_tm.c
+index 0e1343c5..8e8f871e 100644
+--- a/src/bos/bos_tm.c
++++ b/src/bos/bos_tm.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "registration_data.h"
+ #include "boss_tm.h"
+@@ -156,9 +157,9 @@ u8 task_bos_tm_1(TmWork* w) {
+                 return 0;
+             }
+         } else {
+-            param.unk_00 = 0x06010000 + (w->unk_40 << 5);
++            param.unk_00 = HW_VRAM(0x10000) + (w->unk_40 << 5);
+             param.unk_04 = w->unk_42;
+-            param.unk_08 = 0x05000200 + (w->unk_44 << 5);
++            param.unk_08 = HW_PLTT(0x200) + (w->unk_44 << 5);
+             param.unk_0C = 0x60;
+             param.unk_10 = w->x2;
+             param.unk_14 = w->y2;
+diff --git a/src/btl/btl.c b/src/btl/btl.c
+index 465653e2..bc06d7f9 100644
+--- a/src/btl/btl.c
++++ b/src/btl/btl.c
+@@ -1,3 +1,6 @@
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
+ #include "task_descriptors.h"
+ #include "card_battle.h"
+ #include "engine_math.h"
+@@ -778,7 +781,15 @@ void task_btl_sora_0(BtlSoraWork* work, BtlTaskArg* arg) {
+     e->unk_104 = 0;
+     e->vx = e->vy = 0;
+ 
++#ifdef PLATFORM_VITA
++    /*
++     * mode_battle creates the player task with a NULL arg. On the GBA this
++     * reads the BIOS, which returns its last opcode (never zero).
++     */
++    if (arg == 0 || arg->unk_04 != 0) {
++#else
+     if (arg->unk_04 != 0) {
++#endif
+         ColliderInit(&e->collider, 1, e->unk_09E, e->unk_09C);
+     } else {
+         ColliderInit(&e->collider, 2, e->unk_09E, e->unk_09C);
+@@ -1206,6 +1217,27 @@ s32 task_btl_sora_1(BtlSoraWork* work) {
+     } else {
+         held = GetKeysHeld();
+         pressed = GetKeysPressed();
++#ifdef PLATFORM_VITA
++        /*
++         * Dodge-roll button: acts as the second tap of a d-pad double tap
++         * toward the held direction, or the facing direction (flag 4 = left).
++         * The state machine below still decides whether a roll is allowed.
++         */
++        if (gPortDodgePressed != 0) {
++            u16 dir;
++
++            gPortDodgePressed = 0;
++            if (held & DPAD_LEFT) {
++                dir = DPAD_LEFT;
++            } else if (held & DPAD_RIGHT) {
++                dir = DPAD_RIGHT;
++            } else {
++                dir = (p->flags & 4) ? DPAD_LEFT : DPAD_RIGHT;
++            }
++            work->unk_170[dir == DPAD_LEFT ? 0 : 1] = 13;
++            pressed |= dir;
++        }
++#endif
+     }
+ 
+     f = gBtlWork->flags;
+@@ -6800,7 +6832,15 @@ void task_btl_riku_0(BtlRikuWork* work, BtlTaskArg* arg) {
+     e->unk_104 = 0;
+     e->vx = e->vy = 0;
+ 
++#ifdef PLATFORM_VITA
++    /*
++     * mode_battle creates the player task with a NULL arg. On the GBA this
++     * reads the BIOS, which returns its last opcode (never zero).
++     */
++    if (arg == 0 || arg->unk_04 != 0) {
++#else
+     if (arg->unk_04 != 0) {
++#endif
+         ColliderInit(&e->collider, 1, e->unk_09E, e->unk_09C);
+     } else {
+         ColliderInit(&e->collider, 2, e->unk_09E, e->unk_09C);
+@@ -7286,6 +7326,23 @@ s32 task_btl_riku_1(BtlRikuWork* work) {
+     } else {
+         held = GetKeysHeld();
+         pressed = GetKeysPressed();
++#ifdef PLATFORM_VITA
++        /* Dodge-roll button, as in task_btl_sora_1. */
++        if (gPortDodgePressed != 0) {
++            u16 dir;
++
++            gPortDodgePressed = 0;
++            if (held & DPAD_LEFT) {
++                dir = DPAD_LEFT;
++            } else if (held & DPAD_RIGHT) {
++                dir = DPAD_RIGHT;
++            } else {
++                dir = (p->flags & 4) ? DPAD_LEFT : DPAD_RIGHT;
++            }
++            work->unk_174[dir == DPAD_LEFT ? 0 : 1] = 13;
++            pressed |= dir;
++        }
++#endif
+     }
+ 
+     if (p->unk_0E8 == 3) {
+diff --git a/src/card/card_deckexchange.c b/src/card/card_deckexchange.c
+index 7ebd315a..eae0e571 100644
+--- a/src/card/card_deckexchange.c
++++ b/src/card/card_deckexchange.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "card_localized_data.h"
+ #include "msg_localized_data.h"
+@@ -1237,11 +1238,11 @@ void func_080A9B84(DeckExchangeWork* w, u8 b) {
+ 
+     switch (b) {
+     case 0:
+-        pal = (u16*)0x05000100;
++        pal = (u16*)HW_PLTT(0x100);
+         LoadPalette(gUnk_096142F8, pal, 32);
+-        pal = (u16*)0x05000120;
++        pal = (u16*)HW_PLTT(0x120);
+         LoadPalette(gUnk_09614118 + 0x120, pal, 32);
+-        pal = (u16*)0x05000140;
++        pal = (u16*)HW_PLTT(0x140);
+         LoadPalette(gUnk_09614118 + 0x140, pal, 32);
+         LoadBgMap(0, gUnk_09519AB8 + 0x180, 0x180);
+         LoadBgMap(1, gUnk_0951A2B8, 0x180);
+@@ -1257,11 +1258,11 @@ void func_080A9B84(DeckExchangeWork* w, u8 b) {
+         w->y6 = 122;
+         break;
+     case 1:
+-        pal = (u16*)0x05000120;
++        pal = (u16*)HW_PLTT(0x120);
+         LoadPalette(gUnk_096142F8, pal, 32);
+-        pal = (u16*)0x05000100;
++        pal = (u16*)HW_PLTT(0x100);
+         LoadPalette(gUnk_09614118 + 0x100, pal, 32);
+-        pal = (u16*)0x05000140;
++        pal = (u16*)HW_PLTT(0x140);
+         LoadPalette(gUnk_09614118 + 0x140, pal, 32);
+         LoadBgMap(0, gUnk_09519AB8, 0x180);
+         LoadBgMap(1, gUnk_0951A2B8 + 0x180, 0x180);
+@@ -1277,11 +1278,11 @@ void func_080A9B84(DeckExchangeWork* w, u8 b) {
+         w->y6 = 122;
+         break;
+     case 2:
+-        pal = (u16*)0x05000140;
++        pal = (u16*)HW_PLTT(0x140);
+         LoadPalette(gUnk_096142F8, pal, 32);
+-        pal = (u16*)0x05000100;
++        pal = (u16*)HW_PLTT(0x100);
+         LoadPalette(gUnk_09614118 + 0x100, pal, 32);
+-        pal = (u16*)0x05000120;
++        pal = (u16*)HW_PLTT(0x120);
+         LoadPalette(gUnk_09614118 + 0x120, pal, 32);
+         LoadBgMap(0, gUnk_09519AB8, 0x180);
+         LoadBgMap(1, gUnk_0951A2B8, 0x180);
+@@ -1466,19 +1467,19 @@ void func_080AA3A0(DeckExchangeWork* w, s32 id) {
+ 
+     switch (def->unk_2A) {
+     case 0:
+-        LoadPalette(gUnk_09614458, (void*)(w->palette4->index * 32 + 0x05000200),
++        LoadPalette(gUnk_09614458, (void*)(w->palette4->index * 32 + HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 1:
+-        LoadPalette(gUnk_09614478, (void*)(w->palette4->index * 32 + 0x05000200),
++        LoadPalette(gUnk_09614478, (void*)(w->palette4->index * 32 + HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 2:
+-        LoadPalette(gUnk_09614498, (void*)(w->palette4->index * 32 + 0x05000200),
++        LoadPalette(gUnk_09614498, (void*)(w->palette4->index * 32 + HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 3:
+-        LoadPalette(gUnk_096144B8, (void*)(w->palette4->index * 32 + 0x05000200),
++        LoadPalette(gUnk_096144B8, (void*)(w->palette4->index * 32 + HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     }
+diff --git a/src/card/card_deckmenu2.c b/src/card/card_deckmenu2.c
+index 6017aae5..c1773e1a 100644
+--- a/src/card/card_deckmenu2.c
++++ b/src/card/card_deckmenu2.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "card_localized_data.h"
+ #include "msg_localized_data.h"
+@@ -3121,7 +3122,7 @@ u8 func_08089D20(DeckMenuWork* w, void* a) {
+     SetTaskUpdate(a, (TaskUpdateFunc)func_080889DC);
+     LoadPalette(&gUnk_09614418[32],
+                 (void*)(w->palette4->index * 32 +
+-                        0x05000200),
++                        HW_PLTT(0x200)),
+                 (u16)(w->palette4->count << 5));
+     TaskPoolUpdate(&w->taskpool);
+     TaskPoolUpdate(&w->cardpool);
+@@ -3424,7 +3425,7 @@ u8 func_0808A650(DeckMenuWork* w, void* a) {
+     SetTaskUpdate(a, (TaskUpdateFunc)func_080889DC);
+     LoadPalette(&gUnk_09614418[32],
+                 (void*)(w->palette4->index * 32 +
+-                        0x05000200),
++                        HW_PLTT(0x200)),
+                 (u16)(w->palette4->count << 5));
+     TaskPoolUpdate(&w->taskpool);
+     TaskPoolUpdate(&w->cardpool);
+@@ -3714,7 +3715,7 @@ u8 func_0808B068(DeckMenuWork* w, void* a) {
+     SetTaskUpdate(a, (TaskUpdateFunc)func_080889DC);
+     LoadPalette(&gUnk_09614418[32],
+                 (void*)(w->palette4->index * 32 +
+-                        0x05000200),
++                        HW_PLTT(0x200)),
+                 (u16)(w->palette4->count << 5));
+     TaskPoolUpdate(&w->taskpool);
+     TaskPoolUpdate(&w->cardpool);
+@@ -4438,11 +4439,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
+     void* dst;
+     switch (b) {
+     case 0:
+-        dst = (void*)0x05000100;
++        dst = (void*)HW_PLTT(0x100);
+         LoadPalette(gUnk_096142F8, dst, 32);
+-        dst = (void*)0x05000120;
++        dst = (void*)HW_PLTT(0x120);
+         LoadPalette(&gUnk_09614118[0x120], dst, 32);
+-        dst = (void*)0x05000140;
++        dst = (void*)HW_PLTT(0x140);
+         LoadPalette(&gUnk_09614118[0x140], dst, 32);
+         LoadBgMap(0, &gUnk_09519AB8[0x180], 0x180);
+         LoadBgMap(1, gUnk_0951A2B8, 0x180);
+@@ -4458,11 +4459,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
+         w->unk_892 = 122;
+         break;
+     case 1:
+-        dst = (void*)0x05000120;
++        dst = (void*)HW_PLTT(0x120);
+         LoadPalette(gUnk_096142F8, dst, 32);
+-        dst = (void*)0x05000100;
++        dst = (void*)HW_PLTT(0x100);
+         LoadPalette(&gUnk_09614118[0x100], dst, 32);
+-        dst = (void*)0x05000140;
++        dst = (void*)HW_PLTT(0x140);
+         LoadPalette(&gUnk_09614118[0x140], dst, 32);
+         LoadBgMap(0, gUnk_09519AB8, 0x180);
+         LoadBgMap(1, &gUnk_0951A2B8[0x180], 0x180);
+@@ -4478,11 +4479,11 @@ void func_0808CDE8(DeckMenuWork* w, u8 b) {
+         w->unk_892 = 122;
+         break;
+     case 2:
+-        dst = (void*)0x05000140;
++        dst = (void*)HW_PLTT(0x140);
+         LoadPalette(gUnk_096142F8, dst, 32);
+-        dst = (void*)0x05000100;
++        dst = (void*)HW_PLTT(0x100);
+         LoadPalette(&gUnk_09614118[0x100], dst, 32);
+-        dst = (void*)0x05000120;
++        dst = (void*)HW_PLTT(0x120);
+         LoadPalette(&gUnk_09614118[0x120], dst, 32);
+         LoadBgMap(0, gUnk_09519AB8, 0x180);
+         LoadBgMap(1, gUnk_0951A2B8, 0x180);
+@@ -4765,25 +4766,25 @@ void func_0808D73C(DeckMenuWork* w, s32 id) {
+     case 0:
+         LoadPalette(gUnk_09614458,
+                     (void*)(w->palette4->index * 32 +
+-                            0x05000200),
++                            HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 1:
+         LoadPalette(gUnk_09614478,
+                     (void*)(w->palette4->index * 32 +
+-                            0x05000200),
++                            HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 2:
+         LoadPalette(gUnk_09614498,
+                     (void*)(w->palette4->index * 32 +
+-                            0x05000200),
++                            HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 3:
+         LoadPalette(gUnk_096144B8,
+                     (void*)(w->palette4->index * 32 +
+-                            0x05000200),
++                            HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     }
+@@ -5008,7 +5009,7 @@ void func_0808DD20(u8 a, u16 b) {
+ 
+         RequestDma3Copy(gUnk_0940FAD8, dst = base + (b * 64 + 0xD20), 32);
+         RequestDma3Copy(gUnk_0940FAD8, dst += 32, 32);
+-        LoadPalette(gUnk_09614406, (void*)(b * 2 + 0x0500016C), 2);
++        LoadPalette(gUnk_09614406, (void*)(b * 2 + HW_PLTT(0x16C)), 2);
+     }
+ }
+ 
+diff --git a/src/card/card_deckmenu2_2.c b/src/card/card_deckmenu2_2.c
+index 1eca7df8..2184e391 100644
+--- a/src/card/card_deckmenu2_2.c
++++ b/src/card/card_deckmenu2_2.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "card_localized_data.h"
+ #include "msg_localized_data.h"
+@@ -262,7 +263,7 @@ u8 func_080A5D3C(RikuDeckMenuWork* w, void* a) {
+     u16* pal;
+ 
+     base = (u8*)GetBgCharBase(1);
+-    pal = (u16*)0x05000100;
++    pal = (u16*)HW_PLTT(0x100);
+     LoadPalette(gUnk_09614118 + 0x1E0, pal, 32);
+ #ifdef VERSION_EU
+     RequestDma3Copy(gUnkEu_09F74374[gLanguage] + 0x20, base + 0x2D80, 0x1E0);
+@@ -869,25 +870,25 @@ void func_080A6EB4(RikuDeckMenuWork* w, s32 id) {
+     case 0:
+         LoadPalette(gUnk_09614458,
+                     (void*)(w->palette4->index * 32 +
+-                            0x05000200),
++                            HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 1:
+         LoadPalette(gUnk_09614478,
+                     (void*)(w->palette4->index * 32 +
+-                            0x05000200),
++                            HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 2:
+         LoadPalette(gUnk_09614498,
+                     (void*)(w->palette4->index * 32 +
+-                            0x05000200),
++                            HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     case 3:
+         LoadPalette(gUnk_096144B8,
+                     (void*)(w->palette4->index * 32 +
+-                            0x05000200),
++                            HW_PLTT(0x200)),
+                     (u16)(w->palette4->count << 5));
+         break;
+     }
+diff --git a/src/card/card_level_up.c b/src/card/card_level_up.c
+index 1284e758..10fcbfdc 100644
+--- a/src/card/card_level_up.c
++++ b/src/card/card_level_up.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "card_localized_data.h"
+ #include "msg_localized_data.h"
+@@ -359,10 +360,10 @@ u8 Level_Up_1(LevelUpWork* w, void* a) {
+                 }
+ #endif
+                 if (!(gGameState.flags & 8)) {
+-                    LoadPalette(gUnk_09614018, (void*)0x05000140, 0x80);
++                    LoadPalette(gUnk_09614018, (void*)HW_PLTT(0x140), 0x80);
+                 } else {
+                     func_0809E7A4();
+-                    LoadPalette(gUnk_09614098, (void*)0x05000140, 0x80);
++                    LoadPalette(gUnk_09614098, (void*)HW_PLTT(0x140), 0x80);
+                 }
+                 LoadBgMap(1, gUnk_0950F2B8, mapSize);
+                 SetBgMapBlocks(1, gUnk_09EE790C, 2, 1);
+@@ -393,10 +394,10 @@ u8 Level_Up_1(LevelUpWork* w, void* a) {
+                     }
+ #endif
+                     if (!(gGameState.flags & 8)) {
+-                        LoadPalette(gUnk_09614018, (void*)0x05000140, 0x80);
++                        LoadPalette(gUnk_09614018, (void*)HW_PLTT(0x140), 0x80);
+                     } else {
+                         func_0809E7A4();
+-                        LoadPalette(gUnk_09614098, (void*)0x05000140, 0x80);
++                        LoadPalette(gUnk_09614098, (void*)HW_PLTT(0x140), 0x80);
+                     }
+                     SetBgMapBlocks(0, gUnk_09EE790C, 2, 1);
+                     RedrawBgMapAt(0, 0, 0);
+@@ -425,10 +426,10 @@ u8 Level_Up_1(LevelUpWork* w, void* a) {
+                     }
+ #endif
+                     if (!(gGameState.flags & 8)) {
+-                        LoadPalette(gUnk_09614018, (void*)0x05000140, 0x80);
++                        LoadPalette(gUnk_09614018, (void*)HW_PLTT(0x140), 0x80);
+                     } else {
+                         func_0809E7A4();
+-                        LoadPalette(gUnk_09614098, (void*)0x05000140, 0x80);
++                        LoadPalette(gUnk_09614098, (void*)HW_PLTT(0x140), 0x80);
+                     }
+                     SetBgMapBlocks(1, gUnk_09EE790C, 2, 1);
+                     RedrawBgMapAt(1, 0, 0);
+diff --git a/src/card/card_prize_card_init.c b/src/card/card_prize_card_init.c
+index 380ce40f..088e0cec 100644
+--- a/src/card/card_prize_card_init.c
++++ b/src/card/card_prize_card_init.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "card_localized_data.h"
+ #include "msg_localized_data.h"
+@@ -1888,8 +1889,8 @@ ObjTiles* func_080986FC(u8 a) {
+     if (a != 0) {
+         obj = AllocSpriteFrameTiles(256);
+         UpdateSpriteFrameTiles(obj, gUnk_09EF1198[1], gUnk_0950C478);
+-        RequestDma3Copy(&((u8*)obj->src)[a * 128], (void*)(0x06010000 + (obj->index + 4) * 32), 128);
+-        RequestDma3Copy(&((u8*)obj->src)[0x500], (void*)(0x06010000 + obj->index * 32), 128);
++        RequestDma3Copy(&((u8*)obj->src)[a * 128], (void*)(HW_VRAM(0x10000) + (obj->index + 4) * 32), 128);
++        RequestDma3Copy(&((u8*)obj->src)[0x500], (void*)(HW_VRAM(0x10000) + obj->index * 32), 128);
+     } else {
+         obj = AllocSpriteFrameTiles(128);
+         UpdateSpriteFrameTiles(obj, gUnk_09EF1198[0], gUnk_0950C478);
+diff --git a/src/card/card_sysmsgwin.c b/src/card/card_sysmsgwin.c
+index 7ec0bf97..d4ff7fad 100644
+--- a/src/card/card_sysmsgwin.c
++++ b/src/card/card_sysmsgwin.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "card_localized_data.h"
+ #include "msg_localized_data.h"
+@@ -576,7 +577,7 @@ u8 func_080A4F14(SysMsgWinWork* w, void* a) {
+     switch (w->args.unk_07) {
+     case 0:
+     case 1:
+-        pal = (void*)0x050001E0;
++        pal = (void*)HW_PLTT(0x1E0);
+         LoadBgTiles(w->args.bg, gUnk_099597E4, 0x140);
+         LoadBgMap(w->args.bg, gUnk_09985F44, 0x800);
+         LoadPalette(gCard00Palette, pal, 32);
+diff --git a/src/card/card_worldselect.c b/src/card/card_worldselect.c
+index 33f6140a..d941330f 100644
+--- a/src/card/card_worldselect.c
++++ b/src/card/card_worldselect.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "card_localized_data.h"
+ #include "msg_localized_data.h"
+@@ -164,9 +165,9 @@ void MapSelect_0(MapSelectWork* w, u8* a) {
+             w->tiles4 = AllocSpriteFrameTiles(0x180);
+             UpdateSpriteFrameTiles(w->tiles4, gUnk_09EF1198[1], gUnk_0950C478);
+             RequestDma3Copy((u8*)w->tiles4->src + (w->unk_27E << 7),
+-                           (void*)(0x06010000 + ((w->tiles4->index + 4) << 5)), 0x80);
++                           (void*)(HW_VRAM(0x10000) + ((w->tiles4->index + 4) << 5)), 0x80);
+             RequestDma3Copy((u8*)w->tiles4->src + 0x500,
+-                           (void*)(0x06010000 + (w->tiles4->index << 5)), 0x80);
++                           (void*)(HW_VRAM(0x10000) + (w->tiles4->index << 5)), 0x80);
+         }
+         w->tiles2 = LoadObjTiles(gUnk_08F709B0[4].tiles2, 0x300);
+         w->palette = LoadObjPalette(gUnk_09618D38, 32);
+@@ -290,8 +291,8 @@ u8 MapSelect_1(MapSelectWork* w, void* a) {
+     w->tiles3 = LoadObjTiles(gUnk_093F7172, 0x400);
+     LoadBgTiles(1, gUnk_09508098, 0x2020);
+ #endif
+-    LoadPalette(gUnk_09618C58, (void*)0x05000180, 32);
+-    LoadPalette(&gUnk_09618C58[0x40], (void*)0x050001C0, 64);
++    LoadPalette(gUnk_09618C58, (void*)HW_PLTT(0x180), 32);
++    LoadPalette(&gUnk_09618C58[0x40], (void*)HW_PLTT(0x1C0), 64);
+     FadeSetPaletteExcluded(12, 1);
+     FadeSetPaletteExcluded(14, 1);
+     FadeSetPaletteExcluded(15, 1);
+@@ -1479,7 +1480,7 @@ void func_08093C44(u16 a, MapSelectWork* w) {
+         }
+     }
+ 
+-    LoadPalette(w->unk_29E, (void*)0x050001C0, 32);
++    LoadPalette(w->unk_29E, (void*)HW_PLTT(0x1C0), 32);
+ }
+ 
+ void func_08093D28(u16 a, MapSelectWork* w) {
+@@ -1529,7 +1530,7 @@ void func_08093D28(u16 a, MapSelectWork* w) {
+         }
+     }
+ 
+-    LoadPalette(w->unk_29E, (void*)0x05000180, 32);
++    LoadPalette(w->unk_29E, (void*)HW_PLTT(0x180), 32);
+ }
+ 
+ s32 func_08093E34(u16 a, MapSelectWork* w) {
+diff --git a/src/chara.c b/src/chara.c
+index db30063e..ace104a7 100644
+--- a/src/chara.c
++++ b/src/chara.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "registration_data.h"
+ #include "chara_api.h"
+@@ -1081,14 +1082,14 @@ u8 func_080C64A4(void) {
+         }
+         break;
+     case 2:
+-        CpuSet((void*)0x05000000, gCharaObj->unk_46, 0x200);
++        CpuSet((void*)HW_PLTT(0x0), gCharaObj->unk_46, 0x200);
+         func_080149BC(gCharaObj->x, gCharaObj->y + gCharaObj->z - 0x1000);
+         m4aSongNumStart(SONG_EF_BOSS_DEAD1);
+         gCharaObj->unk_44++;
+         break;
+     case 3:
+         gCharaObj->unk_3A++;
+-        FadePaletteToBlack(gCharaObj->unk_46, (u16*)0x05000000, 320, gCharaObj->unk_3A);
++        FadePaletteToBlack(gCharaObj->unk_46, (u16*)HW_PLTT(0x0), 320, gCharaObj->unk_3A);
+         if (++gCharaObj->unk_42 > 9) {
+             gCharaObj->unk_42 = 0;
+             gCharaObj->unk_44++;
+@@ -1096,7 +1097,7 @@ u8 func_080C64A4(void) {
+         break;
+     case 4:
+         gCharaObj->unk_3A = 0;
+-        CpuSet((void*)0x05000000, gCharaObj->unk_846, 0x200);
++        CpuSet((void*)HW_PLTT(0x0), gCharaObj->unk_846, 0x200);
+         gCharaObj->unk_44++;
+         break;
+     case 5:
+@@ -1162,7 +1163,7 @@ u8 func_080C64A4(void) {
+         break;
+     case 11:
+         gCharaObj->unk_3A -= 2;
+-        FadePaletteToWhite(gCharaObj->unk_846, (u16*)0x05000000, 1024, gCharaObj->unk_3A);
++        FadePaletteToWhite(gCharaObj->unk_846, (u16*)HW_PLTT(0x0), 1024, gCharaObj->unk_3A);
+         if (++gCharaObj->unk_42 > 8) {
+             gCharaObj->unk_42 = 0;
+             gCharaObj->unk_44++;
+@@ -1203,7 +1204,7 @@ u8 func_080C64A4(void) {
+         break;
+     case 17:
+         gCharaObj->unk_3A--;
+-        FadePaletteToBlack(gCharaObj->unk_46, (u16*)0x05000000, 320, gCharaObj->unk_3A);
++        FadePaletteToBlack(gCharaObj->unk_46, (u16*)HW_PLTT(0x0), 320, gCharaObj->unk_3A);
+         if (++gCharaObj->unk_42 > 10) {
+             gCharaObj->unk_42 = 0;
+             CharaObjFree();
+@@ -1303,7 +1304,7 @@ u8 func_080C69B4(void) {
+         gCharaObj->unk_44++;
+         break;
+     case 3:
+-        CpuSet((void*)0x05000000, gCharaObj->unk_46, 0x200);
++        CpuSet((void*)HW_PLTT(0x0), gCharaObj->unk_46, 0x200);
+         gCharaObj->unk_44++;
+         break;
+     case 4:
+diff --git a/src/engine.c b/src/engine.c
+index 0d94efd8..b7ddf2e4 100644
+--- a/src/engine.c
++++ b/src/engine.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "engine_math.h"
+ #include "fade.h"
+@@ -129,7 +130,7 @@ u8 func_0800216C(s16 x, s16 y, void* c, void* obj, void* e, ObjAffine* f, u16 g,
+             i = n;
+             do {
+                 cnt = GetObjTileCount(((ObjTileListEntry*)c)->attr0, ((ObjTileListEntry*)c)->attr1);
+-                RequestDma3Copy((u8*)((ObjTiles*)obj)->src + ((((ObjTileListEntry*)c)->tile & 0x3FF) << 5), (void*)(((((ObjTiles*)obj)->index + base) << 5) + 0x06010000), cnt << 5);
++                RequestDma3Copy((u8*)((ObjTiles*)obj)->src + ((((ObjTileListEntry*)c)->tile & 0x3FF) << 5), (void*)(((((ObjTiles*)obj)->index + base) << 5) + HW_VRAM(0x10000)), cnt << 5);
+                 base += cnt;
+                 c = (u16*)c + 3;
+             } while (--i);
+@@ -255,14 +256,14 @@ ObjTiles* LoadObjTiles(void* src, u16 size) {
+     cur = ListPoolFirst(&gSpriteWork->tilePool);
+     if (cur == 0) {
+         node->index = gSpriteWork->tilePool.rangeStart;
+-        RequestDma3Copy(src, (void*)((node->index << 5) + 0x06010000), size);
++        RequestDma3Copy(src, (void*)((node->index << 5) + HW_VRAM(0x10000)), size);
+         ListPoolActivate(&node->node, &gSpriteWork->tilePool);
+         return node;
+     }
+     node->index = gSpriteWork->tilePool.rangeStart;
+     avail = cur->index - gSpriteWork->tilePool.rangeStart;
+     if (node->count <= (s16)avail) {
+-        RequestDma3Copy(src, (void*)((node->index << 5) + 0x06010000), size);
++        RequestDma3Copy(src, (void*)((node->index << 5) + HW_VRAM(0x10000)), size);
+         ListPoolActivateBefore(&node->node, &gSpriteWork->tilePool, &cur->node);
+         return node;
+     }
+@@ -284,7 +285,7 @@ ObjTiles* LoadObjTiles(void* src, u16 size) {
+         }
+ 
+         if (node->count <= end) {
+-            RequestDma3Copy(src, (void*)((node->index << 5) + 0x06010000), size);
++            RequestDma3Copy(src, (void*)((node->index << 5) + HW_VRAM(0x10000)), size);
+             ListPoolActivateAfter(&node->node, &gSpriteWork->tilePool, &cur->node);
+             return node;
+         }
+@@ -429,14 +430,14 @@ ObjPalette* LoadObjPalette(void* src, u16 size) {
+     cur = ListPoolFirst(&gSpriteWork->palettePool);
+     if (cur == 0) {
+         node->index = gSpriteWork->palettePool.rangeStart;
+-        LoadPalette(src, (void*)((node->index << 5) + 0x05000200), size);
++        LoadPalette(src, (void*)((node->index << 5) + HW_PLTT(0x200)), size);
+         ListPoolActivate(&node->node, &gSpriteWork->palettePool);
+         return node;
+     }
+     node->index = gSpriteWork->palettePool.rangeStart;
+     avail = cur->index - gSpriteWork->palettePool.rangeStart;
+     if (node->count <= (s16)avail) {
+-        LoadPalette(src, (void*)((node->index << 5) + 0x05000200), size);
++        LoadPalette(src, (void*)((node->index << 5) + HW_PLTT(0x200)), size);
+         ListPoolActivateBefore(&node->node, &gSpriteWork->palettePool, &cur->node);
+         return node;
+     }
+@@ -458,7 +459,7 @@ ObjPalette* LoadObjPalette(void* src, u16 size) {
+         }
+ 
+         if (node->count <= end) {
+-            LoadPalette(src, (void*)((node->index << 5) + 0x05000200), size);
++            LoadPalette(src, (void*)((node->index << 5) + HW_PLTT(0x200)), size);
+             ListPoolActivateAfter(&node->node, &gSpriteWork->palettePool, &cur->node);
+             return node;
+         }
+@@ -468,7 +469,7 @@ ObjPalette* LoadObjPalette(void* src, u16 size) {
+ }
+ 
+ void LoadObjPaletteBank(u16 bank, void* src) {
+-    LoadPalette(src, (void*)((bank << 5) + 0x05000200), 32);
++    LoadPalette(src, (void*)((bank << 5) + HW_PLTT(0x200)), 32);
+ }
+ 
+ void ReleaseObjPaletteRef(ObjPalette* p) {
+@@ -680,7 +681,7 @@ void func_08002F50(void) {
+     if (gSpriteWork->unk_2BAE != 0) {
+         return;
+     }
+-    oam = (u16*)0x07000000;
++    oam = (u16*)HW_OAM(0x0);
+     for (i = 0; i < gSpriteWork->affineCount; i++) {
+         oam += 3;
+         *oam = gSpriteWork->affine[i].pa;
+@@ -694,7 +695,7 @@ void func_08002F50(void) {
+     }
+     gSpriteWork->affineCount = 0;
+     emitted = 0;
+-    oam = (u16*)0x07000000;
++    oam = (u16*)HW_OAM(0x0);
+     count = gSpriteWork->entryCount;
+     entries = gSpriteWork->sortPtrs;
+     mosaic = gSpriteWork->unk_2BAF;
+@@ -988,7 +989,7 @@ void InitObjTilesAtSlot(ObjTiles* t, u16 slot, void* src, u16 size) {
+         t->sprite = 0;
+         t->allocated = 0;
+         t->index = slot;
+-        RequestDma3Copy(src, (void*)((t->index << 5) + 0x06010000), size);
++        RequestDma3Copy(src, (void*)((t->index << 5) + HW_VRAM(0x10000)), size);
+     }
+ }
+ 
+@@ -1011,7 +1012,7 @@ void InitObjPaletteAtSlot(ObjPalette* t, u16 slot, void* src, u16 size) {
+         t->src = src;
+         t->refCount = 0;
+         t->index = slot;
+-        RequestDma3Copy(src, (void*)((t->index << 5) + 0x05000200), size);
++        RequestDma3Copy(src, (void*)((t->index << 5) + HW_PLTT(0x200)), size);
+     }
+ }
+ 
+@@ -1043,7 +1044,7 @@ u8 UpdateSpriteFrameTiles(ObjTiles* a, u16* b, void* c) {
+                 do {
+                     n = GetObjTileCount(b[0], b[1]);
+                     RequestDma3Copy((u8*)a->src + ((b[2] & 0x3FF) << 5),
+-                                    (void*)(((a->index + acc) << 5) + 0x06010000), n * 32);
++                                    (void*)(((a->index + acc) << 5) + HW_VRAM(0x10000)), n * 32);
+                     acc = acc + n;
+                     b += 3;
+                     j--;
+@@ -1110,7 +1111,7 @@ ObjPalette* AllocObjPalette(u16 size) {
+ 
+ void UpdateAllocatedObjPalette(ObjPalette* t, void* src) {
+     if (t->type == 2) {
+-        LoadPalette(src, (void*)((t->index << 5) + 0x05000200), (u16)(t->count << 5));
++        LoadPalette(src, (void*)((t->index << 5) + HW_PLTT(0x200)), (u16)(t->count << 5));
+     }
+ }
+ 
+@@ -1457,7 +1458,7 @@ void CommitDisplayRegs(void) {
+     REG_BG3X = gBg3X;
+     REG_BG3Y = gBg3Y;
+     REG_DISPCNT = gDispCnt;
+-    *(vu16*)0x05000000 = gBackdropColor;
++    *(vu16*)HW_PLTT(0x0) = gBackdropColor;
+ }
+ 
+ void VTransInit(void) {
+@@ -1509,7 +1510,7 @@ u8 RequestDma3Copy(void* src, void* dst, u16 size) {
+         dma[0] = (u32)src;
+         dma[1] = (u32)dst;
+         dma[2] = 0x80000000 | (size / 2);
+-        dma[2];
++        DMA_READBACK(dma, 2);
+     }
+     return 1;
+ }
+@@ -1645,7 +1646,7 @@ void FlushDma3Queue(void) {
+         dma[0] = (u32)req[i].src;
+         dma[1] = (u32)req[i].dst;
+         dma[2] = (req[i].size / 2) | (DMA_ENABLE << 16);
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         gDma3Requests->transferredBytes += req[i].size;
+     }
+     gDma3Requests->requestCount = 0;
+@@ -1699,7 +1700,7 @@ void FlushDma3Queue(void) {
+         dma[0] = (u32)&zero;
+         dma[1] = (u32)pend[i].dst;
+         dma[2] = (pend[i].size >> 1) | ((DMA_ENABLE | DMA_SRC_FIXED) << 16);
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         gDma3Requests->transferredBytes += pend[i].size;
+     }
+     gDma3Requests->count = 0;
+@@ -2014,7 +2015,7 @@ void LoadBgTiles(s32 bg, void* src, u16 size) {
+ 
+ void LoadBgPalette(s32 bg, void* src, u16 size) {
+     EnableBg(bg);
+-    LoadPalette(src, (void*)((gBgPaletteBank[bg] << 5) + 0x05000000), size);
++    LoadPalette(src, (void*)((gBgPaletteBank[bg] << 5) + HW_PLTT(0x0)), size);
+ }
+ 
+ void LoadBgMap(s32 bg, void* src, u16 size) {
+@@ -2023,11 +2024,11 @@ void LoadBgMap(s32 bg, void* src, u16 size) {
+ }
+ 
+ void* GetBgCharBase(s32 bg) {
+-    return (void*)(((*gBgControl[bg] & 0x0C) << 12) + 0x06000000);
++    return (void*)(((*gBgControl[bg] & 0x0C) << 12) + HW_VRAM(0x0));
+ }
+ 
+ void* GetBgScreenBase(s32 bg) {
+-    return (void*)(((*gBgControl[bg] & 0x1F00) << 3) + 0x06000000);
++    return (void*)(((*gBgControl[bg] & 0x1F00) << 3) + HW_VRAM(0x0));
+ }
+ 
+ void SetBgMapBlocks(s32 bg, void* src, u8 w, u8 h) {
+@@ -2054,7 +2055,7 @@ void RedrawBgMapAt(s32 bg, u16 x, u16 y) {
+     }
+     e->x = x;
+     e->y = y;
+-    CopyBgMapRect(x, y, e, (void*)(((*gBgControl[bg] & 0x1F00) << 3) + 0x06000000), 0, 0, 0x1F, 0x15);
++    CopyBgMapRect(x, y, e, (void*)(((*gBgControl[bg] & 0x1F00) << 3) + HW_VRAM(0x0)), 0, 0, 0x1F, 0x15);
+     SetBgScroll(bg, x & 7, y & 7);
+     e->dirty = 0;
+ }
+@@ -2095,7 +2096,7 @@ void ScrollBgMapTo(s32 bg, u16 x, u16 y) {
+         e->y = y;
+         return;
+     }
+-    dst = (void*)(((*gBgControl[bg] & 0x1F00) << 3) + 0x06000000);
++    dst = (void*)(((*gBgControl[bg] & 0x1F00) << 3) + HW_VRAM(0x0));
+     tx = sx >> 3;
+     ty = sy >> 3;
+     cx = GetBgScrollX(bg) >> 3;
+@@ -2673,7 +2674,7 @@ void LoadPalette(void* src, void* dst, u16 size) {
+ 
+     base = gFadeWork->slots;
+     count = (u16)size / 32;
+-    idx = ((s32)dst - 0x05000000) / 32;
++    idx = ((s32)dst - HW_PLTT(0x0)) / 32;
+     src = LoadPaletteWithEffect(src, dst, size);
+ 
+     for (i = 0; i < count; i++) {
+diff --git a/src/evt/event_message.c b/src/evt/event_message.c
+index 698ebe77..461f137a 100644
+--- a/src/evt/event_message.c
++++ b/src/evt/event_message.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "registration_data.h"
+ #include "eventselect_api.h"
+@@ -3571,9 +3572,9 @@ u8 func_0806E570(EventCharaWork* p) {
+     }
+ 
+     if ((p->keyframes[p->unk_1A0].unk_18 & 0x800) != 0) {
+-        LoadPalette(&gUnk_096148D8[0x100], (void*)(p->obj.unk_1C * 32 + 0x05000200), 32);
++        LoadPalette(&gUnk_096148D8[0x100], (void*)(p->obj.unk_1C * 32 + HW_PLTT(0x200)), 32);
+     } else if ((p->keyframes[p->unk_1A0 - 1].unk_18 & 0x800) != 0) {
+-        LoadPalette(gUnk_0813B09C[p->arg.unk_02].res.palette, (void*)(p->obj.unk_1C * 32 + 0x05000200), 32);
++        LoadPalette(gUnk_0813B09C[p->arg.unk_02].res.palette, (void*)(p->obj.unk_1C * 32 + HW_PLTT(0x200)), 32);
+     }
+ 
+     if ((p->keyframes[p->unk_1A0].unk_18 & 0x100000) != 0) {
+@@ -6135,7 +6136,7 @@ static u8 msgwin_1(MsgWinWork* p, void* a) {
+                 if (e->portraitId == 62) {
+                     void* pal;
+ 
+-                    pal = (void*)0x050001E0;
++                    pal = (void*)HW_PLTT(0x1E0);
+                     LoadBgTiles(p->bg, gUnk_0950E2F8, 0x140);
+                     LoadBgMap(p->bg, gUnk_096112B8, 0x800);
+                     LoadPalette(gCard00Palette, pal, 32);
+@@ -6188,7 +6189,7 @@ static u8 msgwin_1(MsgWinWork* p, void* a) {
+         if (e->portraitId == 62) {
+             void* pal;
+ 
+-            pal = (void*)0x050001E0;
++            pal = (void*)HW_PLTT(0x1E0);
+             LoadBgTiles(p->bg, gUnk_0950E2F8, 0x140);
+             LoadBgMap(p->bg, gUnk_096112B8, 0x800);
+             LoadPalette(gCard00Palette, pal, 32);
+diff --git a/src/evt/mode_movie.c b/src/evt/mode_movie.c
+index 3280da20..ea4816c8 100644
+--- a/src/evt/mode_movie.c
++++ b/src/evt/mode_movie.c
+@@ -1,3 +1,8 @@
++#ifdef PLATFORM_VITA
++#include "intr.h"
++#include "port.h"
++#endif
++#include "gba/hwaddr.h"
+ #include "mode_chkmov.h"
+ #include "registration_data.h"
+ #include "system_state.h"
+@@ -190,7 +195,7 @@ void func_0805EA90(void) {
+                 } else {
+                     attr1 = 0;
+                 }
+-                oam = (u16*)0x07000000;
++                oam = (u16*)HW_OAM(0x0);
+ #ifndef VERSION_JP
+                 x = 0;
+                 y = 0;
+@@ -296,7 +301,11 @@ void func_0805EA90(void) {
+             }
+         }
+     }
++#ifdef PLATFORM_VITA
++    gIntrCheck |= 1;
++#else
+     *(vu16*)0x03007FF8 |= 1;
++#endif
+ }
+ 
+ void mode_movie_1(void) {
+@@ -309,7 +318,7 @@ void mode_movie_1(void) {
+         InitDisplayRegs();
+         gDispCnt &= ~(DISPCNT_BG_ALL_ON | DISPCNT_OBJ_ON);
+         fill = 0;
+-        CpuSet(&fill, (void*)0x06000000, 0x05006000);
++        CpuSet(&fill, (void*)HW_VRAM(0x0), 0x05006000);
+         gUnk_02034938++;
+         break;
+     }
+@@ -323,8 +332,8 @@ void mode_movie_1(void) {
+         EwramHeapInit(GetEwramHeapStart(), GetEwramHeapSize());
+         SetEwramHeapName(sMovieHeapName);
+         SetIwramHeapName(sMovieHeapName);
+-        CpuSet(gUnk_08F69C04, (void*)0x05000200, 16);
+-        CpuSet(gUnk_09614718, (void*)0x05000220, 16);
++        CpuSet(gUnk_08F69C04, (void*)HW_PLTT(0x200), 16);
++        CpuSet(gUnk_09614718, (void*)HW_PLTT(0x220), 16);
+         MovieSetCallbacks(IwramAlloc, EwramAlloc, IwramFree, EwramFree);
+ 
+         switch (gUnk_0203493C) {
+@@ -451,6 +460,13 @@ void mode_movie_1(void) {
+ #endif
+         }
+ 
++#ifdef PLATFORM_VITA
++        /*
++         * The FMV codec is GBA machine code copied to work RAM and executed;
++         * it cannot run here yet, so movies are skipped.
++         */
++        PortLog("movie: skipped (%p)", p);
++#else
+         if (MovieStart(p)) {
+             gUnk_02034958 |= 8;
+             MoviePlay(func_0805E93C, 0);
+@@ -458,6 +474,7 @@ void mode_movie_1(void) {
+         }
+ 
+         MovieClose();
++#endif
+         IwramHeapInit(GetIwramHeapStart(), GetIwramHeapSize());
+         EwramHeapInit(GetEwramHeapStart(), GetEwramHeapSize());
+         VTransInit();
+@@ -481,7 +498,7 @@ void mode_movie_1(void) {
+         s32 fill;
+ 
+         fill = 0;
+-        CpuSet(&fill, (void*)0x06000000, 0x05006000);
++        CpuSet(&fill, (void*)HW_VRAM(0x0), 0x05006000);
+ 
+         if (gUnk_02034958 & 4) {
+ #ifdef VERSION_EU
+diff --git a/src/lib/agb_sram.c b/src/lib/agb_sram.c
+index 7aa34da7..a273e20b 100644
+--- a/src/lib/agb_sram.c
++++ b/src/lib/agb_sram.c
+@@ -1,6 +1,9 @@
+ #include "macros.h"
+ #include "agb_sram.h"
+ #include "gba/io_reg.h"
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
+ 
+ static const char sSramVersion[] = "SRAM_F_V103";
+ 
+@@ -22,6 +25,9 @@ void WriteSramFast(const u8* src, u8* dest, u32 size) {
+ 
+     while (--size != -1)
+         *dest++ = *src++;
++#ifdef PLATFORM_VITA
++    PortSramWritten();
++#endif
+ }
+ 
+ u32 VerifySramFast_Core(const u8* src, u8* dest, u32 size) {
+@@ -34,6 +40,13 @@ u32 VerifySramFast_Core(const u8* src, u8* dest, u32 size) {
+     return 0;
+ }
+ 
++#ifdef PLATFORM_VITA
++void SetSramFastFunc(void) {
++    /* The GBA copies these loops to work RAM to run them from there. */
++    ReadSramFast = ReadSramFast_Core;
++    VerifySramFast = VerifySramFast_Core;
++}
++#else
+ void SetSramFastFunc(void) {
+     u16* src;
+     u16* dest;
+@@ -65,6 +78,7 @@ void SetSramFastFunc(void) {
+ 
+     REG_WAITCNT = (REG_WAITCNT & ~WAITCNT_SRAM_MASK) | WAITCNT_SRAM_8;
+ }
++#endif
+ 
+ u32 WriteAndVerifySramFast(const u8* src, u8* dest, u32 size) {
+     u8 i;
+diff --git a/src/lib/m4a2.c b/src/lib/m4a2.c
+index ca4a80df..93a4ef3e 100644
+--- a/src/lib/m4a2.c
++++ b/src/lib/m4a2.c
+@@ -1,5 +1,6 @@
+ #include "m4a_song.h"
+ #include "m4a.h"
++#include "gba/romptr.h"
+ #include "macros.h"
+ #define M4A_CATALOG_NO_PLAYER_EXTERNS
+ #include "m4a_catalog_data.h"
+@@ -475,11 +476,13 @@ void m4aSoundVSyncOn(void) {
+     soundInfo->pcmDmaCounter = 0;
+     soundInfo->ident = ident - 10;
+ 
++#ifndef PLATFORM_VITA
+     while (*(vu8*)REG_ADDR_VCOUNT == 159)
+         ;
+ 
+     while (*(vu8*)REG_ADDR_VCOUNT != 159)
+         ;
++#endif
+ 
+     REG_TM0CNT_L = -(280896 / soundInfo->pcmSamplesPerVBlank);
+     REG_TM0CNT_H = TIMER_ENABLE;
+@@ -568,7 +571,7 @@ void MPlayStart(MusicPlayerInfo* mplayInfo, SongHeader* songHeader) {
+         || (mplayInfo->priority <= songHeader->priority)) {
+         mplayInfo->status = 0;
+         mplayInfo->songHeader = songHeader;
+-        mplayInfo->tone = songHeader->tone;
++        mplayInfo->tone = GBA_PTR(songHeader->tone);
+         mplayInfo->priority = songHeader->priority;
+         mplayInfo->clock = 0;
+         mplayInfo->tempoD = 150;
+@@ -584,7 +587,7 @@ void MPlayStart(MusicPlayerInfo* mplayInfo, SongHeader* songHeader) {
+             TrackStop(mplayInfo, track);
+             track->flags = MPT_FLG_EXIST | MPT_FLG_START;
+             track->chan = 0;
+-            track->cmdPtr = songHeader->part[i];
++            track->cmdPtr = GBA_PTR(songHeader->part[i]);
+             i++;
+             track++;
+         }
+@@ -1377,7 +1380,7 @@ void ply_xwave(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
+     READ_XCMD_BYTE(wav, 2)
+     READ_XCMD_BYTE(wav, 3)
+ 
+-    track->tone.wav = (WaveData*)wav;
++    track->tone.wav = GBA_PTR((WaveData*)wav);
+     track->cmdPtr += 4;
+ }
+ 
+diff --git a/src/lib/m4a_catalog_data.c b/src/lib/m4a_catalog_data.c
+index 1462808d..bb21ffef 100644
+--- a/src/lib/m4a_catalog_data.c
++++ b/src/lib/m4a_catalog_data.c
+@@ -26,6 +26,18 @@ MusicPlayerTrack gMPlayTracks23[1] __attribute__((aligned(8)));
+ MusicPlayerTrack gMPlayTracks24[2] __attribute__((aligned(8)));
+ MusicPlayerTrack gMPlayTracks25[2] __attribute__((aligned(8)));
+ 
++#ifdef PLATFORM_VITA
++/*
++ * Unused player slots are NULL on the GBA, where the code harmlessly touches
++ * address 0. Here they point at a player that is never opened, so its ident
++ * never matches and every m4a call ignores it.
++ */
++static MusicPlayerInfo sMPlayInfoUnused;
++#define UNUSED_PLAYER &sMPlayInfoUnused
++#else
++#define UNUSED_PLAYER NULL
++#endif
++
+ const MusicPlayer gMPlayTable[26] = {
+     {&gMPlayInfo_BGM, gMPlayTracks0, 14, 0},
+     {&gUnk_0203DC90, gMPlayTracks1, 1, 0},
+@@ -40,9 +52,9 @@ const MusicPlayer gMPlayTable[26] = {
+     {&gUnk_0203DD10, gMPlayTracks10, 3, 0},
+     {&gUnk_0203DF20, gMPlayTracks11, 1, 0},
+     {&gUnk_0203DDD0, gMPlayTracks12, 1, 0},
+-    {NULL, NULL, 0, 0},
+-    {NULL, NULL, 0, 0},
+-    {NULL, NULL, 0, 0},
++    {UNUSED_PLAYER, NULL, 0, 0},
++    {UNUSED_PLAYER, NULL, 0, 0},
++    {UNUSED_PLAYER, NULL, 0, 0},
+     {&gUnk_0203DA50, gMPlayTracks16, 2, 0},
+     {&gUnk_0203DE10, gMPlayTracks17, 1, 0},
+     {&gUnk_0203DC10, gMPlayTracks18, 1, 0},
+diff --git a/src/lib/movie.c b/src/lib/movie.c
+index 343f297b..e8c569d5 100644
+--- a/src/lib/movie.c
++++ b/src/lib/movie.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "snd_stream.h"
+ #include "movie.h"
+@@ -73,7 +74,7 @@ void MoviePlay(s32 (*a)(s32), s32 b) {
+     MovieGetSize(gMoviePlayer, &w, &h);
+     x = (240 - w) >> 1;
+     y = (160 - h) >> 1;
+-    MovieDrawFrame(gMoviePlayer, (u16*)0x06000000 + (y * 240 + x));
++    MovieDrawFrame(gMoviePlayer, (u16*)HW_VRAM(0x0) + (y * 240 + x));
+     MovieAdvanceFrame(gMoviePlayer);
+     SndStreamStart();
+     channels = MovieGetChannels(gMoviePlayer);
+@@ -86,7 +87,7 @@ void MoviePlay(s32 (*a)(s32), s32 b) {
+     while (1) {
+         while (MovieSyncFrame(gMoviePlayer) == 0) {
+         }
+-        MovieDrawFrame(gMoviePlayer, (u16*)0x06000000 + (y * 240 + x));
++        MovieDrawFrame(gMoviePlayer, (u16*)HW_VRAM(0x0) + (y * 240 + x));
+ 
+         if (MovieAdvanceFrame(gMoviePlayer) == 0) {
+             break;
+diff --git a/src/main.c b/src/main.c
+index ed4eb83d..6d7f1f34 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -1,3 +1,12 @@
++#ifdef PLATFORM_VITA
++#include "port.h"
++#define TRACE(...) PORT_TRACE(__VA_ARGS__)
++#define TRACE_EARLY(...) PORT_TRACE_EARLY(__VA_ARGS__)
++#else
++#define TRACE(...)
++#define TRACE_EARLY(...)
++#endif
++#include "gba/hwaddr.h"
+ #include "chara_api.h"
+ #include "intr.h"
+ #include "gba/syscall.h"
+@@ -15,7 +24,12 @@
+ #include "system_state.h"
+ #include "gba/io_reg.h"
+ 
++#ifdef PLATFORM_VITA
++static void* sIntrVector;
++#define INTR_VECTOR sIntrVector
++#else
+ #define INTR_VECTOR (*(void**)0x03007FFC)
++#endif
+ 
+ vu16 gFrameSyncFlags;
+ u16 gVBlankEndVCount;
+@@ -99,12 +113,14 @@ void ClearSystemMemory(void) {
+ 
+     RegisterRamReset(0xFF);
+     REG_WAITCNT = (WAITCNT_SRAM_2 | WAITCNT_WS0_N_3 | WAITCNT_WS0_S_1 | WAITCNT_WS1_N_3 | WAITCNT_WS1_S_1 | WAITCNT_WS2_N_3 | WAITCNT_WS2_S_1 | WAITCNT_PREFETCH_ENABLE);
++#ifndef PLATFORM_VITA
+     a = 0;
+     CpuSet(&a, (void*)0x02000000, 0x05010000);
+     b = 0;
+     CpuSet(&b, (void*)0x03000000, 0x05001F80);
++#endif
+     c = 0;
+-    CpuSet(&c, (void*)0x06000000, 0x05006000);
++    CpuSet(&c, (void*)HW_VRAM(0x0), 0x05006000);
+ }
+ #endif
+ 
+@@ -125,17 +141,22 @@ void InitSystem(void) {
+ 
+     RegisterRamReset(0xFF);
+     REG_WAITCNT = (WAITCNT_SRAM_2 | WAITCNT_WS0_N_3 | WAITCNT_WS0_S_1 | WAITCNT_WS1_N_3 | WAITCNT_WS1_S_1 | WAITCNT_WS2_N_3 | WAITCNT_WS2_S_1 | WAITCNT_PREFETCH_ENABLE);
++#ifdef PLATFORM_VITA
++    /* Work RAM is the zero-initialized .bss of the port. */
++    dma = (vu32*)REG_ADDR_DMA3;
++#else
+     zero = 0;
+     dma = (vu32*)REG_ADDR_DMA3;
+     dma[0] = (vu32)&zero;
+     dma[1] = 0x02000000;
+     dma[2] = ((DMA_ENABLE | DMA_32BIT | DMA_SRC_FIXED) << 16) | 0x10000;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     zero = 0;
+     dma[0] = (vu32)&zero;
+     dma[1] = 0x03000000;
+     dma[2] = ((DMA_ENABLE | DMA_32BIT | DMA_SRC_FIXED) << 16) | 0x1F80;
+-    dma[2];
++    DMA_READBACK(dma, 2);
++#endif
+ #endif
+     gVBlankEndVCount = 0;
+     gFrameSyncFlags = 0;
+@@ -147,20 +168,25 @@ void InitSystem(void) {
+ #ifdef VERSION_EU
+     dma = (vu32*)REG_ADDR_DMA3;
+ #endif
++#ifndef PLATFORM_VITA
+     dma[0] = (vu32)IrqHandler;
+     dma[1] = (vu32)gIntrHandler;
+     dma[2] = ((DMA_ENABLE | DMA_32BIT) << 16) | 0x200;
+-    dma[2];
++    DMA_READBACK(dma, 2);
++#endif
+     INTR_VECTOR = gIntrHandler;
+     REG_IE = INTR_FLAG_GAMEPAK;
+     REG_IF = INTR_FLAG_GAMEPAK;
+     REG_IME = 1;
+     InitIntrTable();
++    TRACE("InitSystem: %s done", "InitIntrTable");
+     m4aSoundInit();
++    TRACE("InitSystem: %s done", "m4aSoundInit");
+     m4aSoundVSyncOff();
+     IwramHeapInit(GetIwramHeapStart(), GetIwramHeapSize());
+     EwramHeapInit(GetEwramHeapStart(), GetEwramHeapSize());
+     VTransInit();
++    TRACE("InitSystem: %s done", "VTransInit");
+     SpriteInit();
+     BgInit();
+     FadeInit();
+@@ -170,8 +196,11 @@ void InitSystem(void) {
+     ResetKeyState();
+     SeedRandom(0x12D687);
+     InitDisplayRegs();
++    TRACE("InitSystem: %s done", "InitDisplayRegs");
+     SaveInitSram();
++    TRACE("InitSystem: %s done", "SaveInitSram");
+     ScanlineDmaReset();
++    TRACE("InitSystem: %s done", "ScanlineDmaReset");
+ #ifdef VERSION_EU
+     ModeInit(flag);
+ #else
+@@ -181,7 +210,11 @@ void InitSystem(void) {
+ 
+ void AgbMain(void) {
+     s32 bit;
++#ifdef PLATFORM_VITA
++    s32 set;
++#else
+     register s32 set asm("r5");
++#endif
+ 
+     gFrameCounter = 0;
+     gVBlankCounter = 0;
+@@ -189,10 +222,14 @@ void AgbMain(void) {
+     gUnk_03006C10 = 0;
+     gSioPlayerId = 0;
+     gSioStatus = 0;
++    TRACE("AgbMain: InitSystem");
+     InitSystem();
++    TRACE("AgbMain: InitSystem done");
+     EnableVBlankIntr();
++    TRACE("AgbMain: entering main loop");
+     bit = 4;
+     for (;;) {
++        TRACE_EARLY("loop: UpdateKeyState (flags=%04X)", gFrameSyncFlags);
+         UpdateKeyState();
+         if (gSystemFlags & 1) {
+             func_080C55DC();
+@@ -208,17 +245,24 @@ void AgbMain(void) {
+             u16 flags = gFrameSyncFlags;
+             set = 4;
+             if ((flags & bit) == 0) {
++#ifdef PLATFORM_VITA
++                gPortModeUpdates++;
++#endif
++                TRACE_EARLY("loop: ModeUpdate");
+                 ModeUpdate();
++                TRACE_EARLY("loop: ModeUpdate done");
+                 gFrameSyncFlags |= set;
+             }
+         }
+         ApplyIntrCallbacks();
++        TRACE_EARLY("loop: VBlankIntrWait");
+         VBlankIntrWait();
+         gFrameCounter++;
+     }
+ }
+ 
+ void VBlankIntr(void) {
++    TRACE_EARLY("VBlankIntr (override %p, flags %04X)", (void*)gVBlankHandlerOverride, gFrameSyncFlags);
+     if (gVBlankHandlerOverride != 0) {
+         gVBlankHandlerOverride();
+         return;
+diff --git a/src/map/lockon.c b/src/map/lockon.c
+index cf261c93..71a88247 100644
+--- a/src/map/lockon.c
++++ b/src/map/lockon.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "registration_data.h"
+ #include "map_api.h"
+ #include "mode.h"
+@@ -421,7 +422,7 @@ s32 func_0805F93C(u8 bg, u8 b, u8 c, u8 d, u8 e) {
+ 
+ void func_0805FA60(s32 a, void* b, s32 c, u8 d) {
+     if (b != 0) {
+-        LoadPalette(b, (void*)(d * 32 + 0x05000000), 32);
++        LoadPalette(b, (void*)(d * 32 + HW_PLTT(0x0)), 32);
+     }
+ 
+     gUnk_02034A18 = d;
+diff --git a/src/map/map.c b/src/map/map.c
+index 338f7656..bacdf593 100644
+--- a/src/map/map.c
++++ b/src/map/map.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "system_state.h"
+ #include "monsgage.h"
+ #include "map.h"
+@@ -4956,7 +4957,7 @@ void func_080ED0B8(ObjTiles* p, u8 a, u16 v) {
+     d[2] = v - d[0] * 100 - d[1] * 10;
+ 
+     for (i = 0, q = d; i < 3; i++) {
+-        RequestDma3Copy((void*)&gUnk_099581A4[*q * 32], (void*)(0x06010000 + (p->index + a + i) * 32), 0x20);
++        RequestDma3Copy((void*)&gUnk_099581A4[*q * 32], (void*)(HW_VRAM(0x10000) + (p->index + a + i) * 32), 0x20);
+         q++;
+     }
+ }
+@@ -4973,7 +4974,7 @@ void func_080ED14C(ObjTiles* p, u8 a, u32 v) {
+     d[4] = v - d[0] * 10000 - d[1] * 1000 - d[2] * 100 - d[3] * 10;
+ 
+     for (i = 0, q = d; i < 5; i++) {
+-        RequestDma3Copy((void*)&gUnk_099581A4[*q * 32], (void*)(0x06010000 + (p->index + a + i) * 32), 0x20);
++        RequestDma3Copy((void*)&gUnk_099581A4[*q * 32], (void*)(HW_VRAM(0x10000) + (p->index + a + i) * 32), 0x20);
+         q++;
+     }
+ }
+diff --git a/src/menu/mode_allmap.c b/src/menu/mode_allmap.c
+index f63c757f..89aeb7c6 100644
+--- a/src/menu/mode_allmap.c
++++ b/src/menu/mode_allmap.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "mode_allmap.h"
+ #include "sprites_allmap.h"
+@@ -121,13 +122,13 @@ void func_080D3050(void) {
+     if (t[gUnk_02034E3A].unk_00 == 0xFF) {
+         gUnk_02034E3A = 0;
+     }
+-    LoadPalette(&gUnk_0984A138[t[gUnk_02034E3A].unk_00 * 0x20], (void*)0x05000040, 0x20);
++    LoadPalette(&gUnk_0984A138[t[gUnk_02034E3A].unk_00 * 0x20], (void*)HW_PLTT(0x40), 0x20);
+ }
+ 
+ void func_080D30C8(void) {
+     RequestDma3Copy(gUnk_096FDA8C[gGameState.world].map, (u8*)GetBgScreenBase(2) + 0x200, 0x300);
+     RequestDma3Copy(gUnk_096FDA8C[gGameState.world].tiles, (u8*)GetBgCharBase(2) + 0x2000, 0x2000);
+-    LoadPalette(gUnk_096FDA8C[gGameState.world].palette, (void*)0x05000140, 0x20);
++    LoadPalette(gUnk_096FDA8C[gGameState.world].palette, (void*)HW_PLTT(0x140), 0x20);
+ }
+ 
+ void func_080D313C(void) {
+diff --git a/src/menu/mode_jiminy.c b/src/menu/mode_jiminy.c
+index d0b44623..e4745769 100644
+--- a/src/menu/mode_jiminy.c
++++ b/src/menu/mode_jiminy.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "sprites_msg.h"
+ #include "jiminy_journal.h"
+ #include "sprites_bos5.h"
+@@ -2459,16 +2460,16 @@ void func_0805BAE4(void) {
+                 (u8*)GetBgCharBase(3) + 0x4000, gJiminyWork->detail->tileSize);
+             switch ((u16)gJiminyWork->detail->paletteSize) {
+             case 0x60:
+-                paletteDest = (u16*)0x050001A0;
++                paletteDest = (u16*)HW_PLTT(0x1A0);
+                 LoadPalette(gJiminyWork->detail->bgPalette, paletteDest, 0x60);
+                 break;
+             case 0x40:
+-                paletteDest = (u16*)0x050001C0;
++                paletteDest = (u16*)HW_PLTT(0x1C0);
+                 LoadPalette(gJiminyWork->detail->bgPalette, paletteDest, 0x40);
+                 break;
+             case 0x20:
+             default:
+-                paletteDest = (u16*)0x050001E0;
++                paletteDest = (u16*)HW_PLTT(0x1E0);
+                 LoadPalette(gJiminyWork->detail->bgPalette, paletteDest, 0x20);
+                 break;
+             }
+diff --git a/src/menu/mode_mapinspect.c b/src/menu/mode_mapinspect.c
+index 46187afa..6bce1af8 100644
+--- a/src/menu/mode_mapinspect.c
++++ b/src/menu/mode_mapinspect.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "localized_resource_assets.h"
+ #include "registration_data.h"
+ #include "system_state.h"
+@@ -373,13 +374,13 @@ void func_081076D4(void) {
+     p = func_0810718C();
+ 
+     if (func_08107220(gUnk_02035E2E) > 0) {
+-        LoadPalette(gUnk_09A3D23C + p->category * 32, (void*)0x05000000, 12);
++        LoadPalette(gUnk_09A3D23C + p->category * 32, (void*)HW_PLTT(0x0), 12);
+     }
+ 
+     if (gUnk_02035E2C == 1) {
+         for (i = 0; i <= 9; i++) {
+             LoadDecimalDigitTiles(0, gUnk_09A067DC, (u8*)GetBgCharBase(0) + (i * 64 + 0x40), 32, 1);
+-            LoadPalette(gUnk_09A3D2C8, (void*)(0x05000000 + (i + 6) * 2), 2);
++            LoadPalette(gUnk_09A3D2C8, (void*)(HW_PLTT(0x0) + (i + 6) * 2), 2);
+         }
+     } else if (p->category == 3) {
+         if (func_08107220(gUnk_02035E2E) > 0) {
+@@ -390,14 +391,14 @@ void func_081076D4(void) {
+             v = p->countsByValue[i];
+             if (v != 0 && func_08107220(gUnk_02035E2E) > 0) {
+                 LoadDecimalDigitTiles(v, gUnk_09A067FC, (u8*)GetBgCharBase(0) + 0x40, 32, 1);
+-                LoadPalette(gUnk_09A3D248, (void*)0x0500000C, 2);
++                LoadPalette(gUnk_09A3D248, (void*)HW_PLTT(0xC), 2);
+                 break;
+             }
+         }
+ 
+         if (i > 9) {
+             LoadDecimalDigitTiles(0, gUnk_09A067DC, (u8*)GetBgCharBase(0) + 0x40, 32, 1);
+-            LoadPalette(gUnk_09A3D2C8, (void*)0x0500000C, 2);
++            LoadPalette(gUnk_09A3D2C8, (void*)HW_PLTT(0xC), 2);
+         }
+     } else {
+         if (func_08107220(gUnk_02035E2E) > 0) {
+@@ -408,10 +409,10 @@ void func_081076D4(void) {
+             v = p->countsByValue[i];
+             if (v != 0 && func_08107220(gUnk_02035E2E) > 0) {
+                 LoadDecimalDigitTiles(v, gUnk_09A067FC, (u8*)GetBgCharBase(0) + (i * 64 + 0x40), 32, 1);
+-                LoadPalette(gUnk_09A3D248, (void*)(0x05000000 + (i + 6) * 2), 2);
++                LoadPalette(gUnk_09A3D248, (void*)(HW_PLTT(0x0) + (i + 6) * 2), 2);
+             } else {
+                 LoadDecimalDigitTiles(0, gUnk_09A067DC, (u8*)GetBgCharBase(0) + (i * 64 + 0x40), 32, 1);
+-                LoadPalette(gUnk_09A3D2C8, (void*)(0x05000000 + (i + 6) * 2), 2);
++                LoadPalette(gUnk_09A3D2C8, (void*)(HW_PLTT(0x0) + (i + 6) * 2), 2);
+             }
+         }
+     }
+@@ -491,13 +492,13 @@ void func_08107A74(MapCardInventoryEntry* p) {
+     dma[0] = (u32)(p + 1);
+     dma[1] = (u32)p;
+     dma[2] = ((26 - func_0810714C()) * 14) | (DMA_ENABLE << 16);
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     zero = 0;
+     dma[0] = (u32)&zero;
+     q = &gMapCardInventoryEntries[26];
+     dma[1] = (u32)q;
+     dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0xE;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     q->cardType = 27;
+ 
+     for (j = row + 1; j <= 3; j++) {
+@@ -544,7 +545,7 @@ void func_08107B84(void) {
+     dma[0] = (u32)&zero;
+     dma[1] = (u32)gMapCardInventoryEntries;
+     dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x17A;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+ 
+     for (i = 0; i <= 26; i++) {
+         gMapCardInventoryEntries[i].cardType = 27;
+diff --git a/src/menu/mode_ms.c b/src/menu/mode_ms.c
+index 86728d17..fc1d74a9 100644
+--- a/src/menu/mode_ms.c
++++ b/src/menu/mode_ms.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include <stddef.h>
+ #include "registration_data.h"
+ #include "system_state.h"
+@@ -390,7 +391,7 @@ void func_08102984(s16 a) {
+     dma[0] = (u32)&zero;
+     dma[1] = (u32)gUnk_02035C00;
+     dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x280;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+ 
+     for (j = 0; j < 4; j++) {
+         if (gUnk_02035B18[a][j][0] >= 0) {
+@@ -755,7 +756,7 @@ u8 func_0810329C(u16 a) {
+                     gUnk_02035B62 = 0;
+                     gUnk_02035AD4 = gUnk_020358C8[0].x - 0x1000;
+                     gUnk_02035AD8 = gUnk_020358C8[0].y - 0x2000;
+-                    LoadPalette(gUnk_09A3DA1C + gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].unk_2A * 32, (void*)0x050001A0, 0x20);
++                    LoadPalette(gUnk_09A3DA1C + gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].unk_2A * 32, (void*)HW_PLTT(0x1A0), 0x20);
+                     gUnk_02035A48 = LoadTextSlots(LANGSEL(gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].name), gUnk_02035A44);
+                     gUnk_02035A50 = LoadTextSlots((void*)LANGSTR(gUnk_09EE8F48[gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].unk_1C]), gUnk_02035A4C);
+                     LoadObjPaletteBank(((FldRes*)gUnk_02035A40)->index, gUnk_09A3DB7C + gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].unk_2A * 32);
+@@ -797,7 +798,7 @@ u8 func_0810329C(u16 a) {
+             }
+ 
+             if (gUnk_02035B62 != old) {
+-                LoadPalette(gUnk_09A3DA1C + gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].unk_2A * 32, (void*)0x050001A0, 0x20);
++                LoadPalette(gUnk_09A3DA1C + gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].unk_2A * 32, (void*)HW_PLTT(0x1A0), 0x20);
+                 gUnk_02035A48 = LoadTextSlots(LANGSEL(gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].name), gUnk_02035A44);
+                 gUnk_02035A50 = LoadTextSlots((void*)LANGSTR(gUnk_09EE8F48[gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].unk_1C]), gUnk_02035A4C);
+                 LoadObjPaletteBank(((FldRes*)gUnk_02035A40)->index, gUnk_09A3DB7C + gCardDefs[gUnk_02035B58[gUnk_02035B62] & 0xFFF].unk_2A * 32);
+diff --git a/src/menu/mode_worldinspect.c b/src/menu/mode_worldinspect.c
+index f3796b67..ef5921bf 100644
+--- a/src/menu/mode_worldinspect.c
++++ b/src/menu/mode_worldinspect.c
+@@ -834,7 +834,7 @@ void mode_worldinspect_0(void) {
+     dma[0] = (u32)gUnk_09A32EDC;
+     dma[1] = (u32)gUnk_020354D4;
+     dma[2] = (DMA_ENABLE << 16) | 0x280;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+ 
+     for (i = 0; i <= 11; i++) {
+         if (gUnk_02035100[i] != 0) {
+diff --git a/src/menu/mode_worldwarp.c b/src/menu/mode_worldwarp.c
+index 84f5a6af..ace8aa81 100644
+--- a/src/menu/mode_worldwarp.c
++++ b/src/menu/mode_worldwarp.c
+@@ -564,7 +564,7 @@ void mode_worldwarp_0(void) {
+     dma[0] = (u32)gUnk_09A3641C;
+     dma[1] = (u32)gUnk_0203550C;
+     dma[2] = (DMA_ENABLE << 16) | 0x280;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+ 
+     for (i = 0; i <= 12; i++) {
+         if (gUnk_020354F0[i] >= 0) {
+diff --git a/src/menu/ms_charge.c b/src/menu/ms_charge.c
+index 7cae7034..b367f42d 100644
+--- a/src/menu/ms_charge.c
++++ b/src/menu/ms_charge.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "localized_resource_assets.h"
+ #include "system_state.h"
+ #include "ms_charge_api.h"
+@@ -331,13 +332,13 @@ void func_08105090(void) {
+     card = func_08104B2C();
+ 
+     if (func_08104AA4(gUnk_02035C18) > 0) {
+-        LoadPalette(gUnk_09A3DD7C + card->unk_04 * 0x20, (void*)0x050000E0, 0x0C);
++        LoadPalette(gUnk_09A3DD7C + card->unk_04 * 0x20, (void*)HW_PLTT(0xE0), 0x0C);
+     }
+ 
+     if ((s16)gUnk_02035C16 == 1) {
+         for (i = 0; i < 10; i++) {
+             LoadDecimalDigitTiles(0, gUnk_09A1DF7C, (u8*)GetBgCharBase(0) + (i * 0x40 + 0x340), 0x20, 2);
+-            LoadPalette(gUnk_09A3DE08, (void*)(0x050000EC + i * 2), 2);
++            LoadPalette(gUnk_09A3DE08, (void*)(HW_PLTT(0xEC) + i * 2), 2);
+         }
+     } else if (card->unk_04 == 3) {
+         if (func_08104AA4(gUnk_02035C18) > 0) {
+@@ -352,14 +353,14 @@ void func_08105090(void) {
+             v = card->unk_06[i][0];
+             if (v != 0 && func_08104AA4(gUnk_02035C18) > 0) {
+                 LoadDecimalDigitTiles(v, gUnk_09A1DF9C, (u8*)GetBgCharBase(0) + 0x340, 0x20, 2);
+-                LoadPalette(gUnk_09A3DD88, (void*)0x050000EC, 2);
++                LoadPalette(gUnk_09A3DD88, (void*)HW_PLTT(0xEC), 2);
+                 break;
+             }
+         }
+ 
+         if (i > 9) {
+             LoadDecimalDigitTiles(0, gUnk_09A1DF7C, (u8*)GetBgCharBase(0) + 0x340, 0x20, 2);
+-            LoadPalette(gUnk_09A3DE08, (void*)0x050000EC, 2);
++            LoadPalette(gUnk_09A3DE08, (void*)HW_PLTT(0xEC), 2);
+         }
+     } else {
+         if (func_08104AA4(gUnk_02035C18) > 0) {
+@@ -374,10 +375,10 @@ void func_08105090(void) {
+             v = card->unk_06[i][0];
+             if (v != 0 && func_08104AA4(gUnk_02035C18) > 0) {
+                 LoadDecimalDigitTiles(v, gUnk_09A1DF9C, (u8*)GetBgCharBase(0) + (i * 0x40 + 0x340), 0x20, 2);
+-                LoadPalette(gUnk_09A3DD88, (void*)(0x050000EC + i * 2), 2);
++                LoadPalette(gUnk_09A3DD88, (void*)(HW_PLTT(0xEC) + i * 2), 2);
+             } else {
+                 LoadDecimalDigitTiles(0, gUnk_09A1DF7C, (u8*)GetBgCharBase(0) + (i * 0x40 + 0x340), 0x20, 2);
+-                LoadPalette(gUnk_09A3DE08, (void*)(0x050000EC + i * 2), 2);
++                LoadPalette(gUnk_09A3DE08, (void*)(HW_PLTT(0xEC) + i * 2), 2);
+             }
+         }
+     }
+@@ -478,14 +479,14 @@ void func_081054D0(MsCard* card) {
+     dma[0] = (u32)(card + 1);
+     dma[1] = (u32)card;
+     dma[2] = ((285 - func_08104AEC()) * 26) | (DMA_ENABLE << 16);
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     p = &zero;
+     *p = 0;
+     dma[0] = (u32)p;
+     last = &gMsCards[285];
+     dma[1] = (u32)last;
+     dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x1A;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     last->unk_00 = 0x8F;
+ 
+     for (j = slot + 1; j <= 3; j++) {
+@@ -547,7 +548,7 @@ void func_0810563C(void) {
+     dma[0] = (u32)p;
+     dma[1] = (u32)gMsCards;
+     dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x1D0C;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+ 
+     for (n = 0; n <= 285; n++) {
+         gMsCards[n].unk_00 = 0x8F;
+diff --git a/src/msg/msg.c b/src/msg/msg.c
+index 9c935029..0f82d90e 100644
+--- a/src/msg/msg.c
++++ b/src/msg/msg.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "msg.h"
+ #include "sprites_msg.h"
+ 
+@@ -6600,7 +6601,7 @@ s32 func_0806C490(TextChar* a) {
+     u8 n;
+ 
+     w = 0;
+-    dst = (u8*)0x06014000;
++    dst = (u8*)HW_VRAM(0x14000);
+     t = 0;
+     n = 0;
+ 
+@@ -6785,7 +6786,7 @@ s32 func_0806C81C(TextChar* a, u16 b) {
+     u8 n;
+ 
+     w = 0;
+-    dst = (u8*)0x06014000 + b * 32;
++    dst = (u8*)HW_VRAM(0x14000) + b * 32;
+     t = 0;
+     n = 0;
+ 
+@@ -6961,7 +6962,7 @@ s32 func_0806C81C(TextChar* a, u16 b) {
+ }
+ #endif
+ u8 func_0806CBAC(TextChar* a, u16* b, u16 tile) {
+-    u8* dst = (u8*)0x06014000 + tile * 32;
++    u8* dst = (u8*)HW_VRAM(0x14000) + tile * 32;
+     s32 flag = 0;
+     gUnk_02034A90 = 0;
+     *b = 0;
+diff --git a/src/pallet.c b/src/pallet.c
+index d63d6e32..c7f6b97f 100644
+--- a/src/pallet.c
++++ b/src/pallet.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "pallet.h"
+ #include "intr.h"
+@@ -23,7 +24,7 @@ PaletteWave gBgWaves[5] EWRAM_COMMON(16);
+ 
+ 
+ u16* FadePaletteToBlack(u16* src, u16* dst, u16 size, u16 amount) {
+-    s32 base = ((s32)dst - 0x05000000) >> 1;
++    s32 base = ((s32)dst - HW_PLTT(0x0)) >> 1;
+     u16 count = size >> 1;
+     u16 i;
+     u16 b[2];
+@@ -66,7 +67,7 @@ u16* FadePaletteToBlack(u16* src, u16* dst, u16 size, u16 amount) {
+ }
+ 
+ u16* FadePaletteToGray(u16* src, u16* dst, u16 size, u16 amount) {
+-    s32 base = ((s32)dst - 0x05000000) >> 1;
++    s32 base = ((s32)dst - HW_PLTT(0x0)) >> 1;
+     u16 count = size >> 1;
+     s16 inv = 31 - amount;
+     u16 i;
+@@ -92,7 +93,7 @@ u16* FadePaletteToGray(u16* src, u16* dst, u16 size, u16 amount) {
+ }
+ 
+ u16* FadePaletteToWhite(u16* src, u16* dst, u16 size, u16 amount) {
+-    s32 base = ((s32)dst - 0x05000000) >> 1;
++    s32 base = ((s32)dst - HW_PLTT(0x0)) >> 1;
+     u16 count = size >> 1;
+     u16 i;
+     u16 b[2];
+@@ -135,7 +136,7 @@ u16* FadePaletteToWhite(u16* src, u16* dst, u16 size, u16 amount) {
+ }
+ 
+ u16* BrightenPalette(u16* src, u16* dst, u16 size, u16 amount) {
+-    s32 base = ((s32)dst - 0x05000000) >> 1;
++    s32 base = ((s32)dst - HW_PLTT(0x0)) >> 1;
+     u16 count = size >> 1;
+     u16 i;
+ 
+@@ -177,7 +178,7 @@ u16* BrightenPalette(u16* src, u16* dst, u16 size, u16 amount) {
+ }
+ 
+ u16* LoadPaletteBuffered(void* src, u16* dst, u16 size) {
+-    s32 base = ((s32)dst - 0x05000000) >> 1;
++    s32 base = ((s32)dst - HW_PLTT(0x0)) >> 1;
+ 
+     CpuSet(src, &gPaletteBuffer->colors[base], size >> 1);
+ 
+@@ -259,7 +260,7 @@ void SetPaletteBankFadeEnabled(u16 bank, u8 a) {
+ u16* FadeAllPalettesToBlack(u16* src, u16 amount) {
+     u16 bank;
+     u16 j;
+-    u16* pal = (u16*)0x05000000;
++    u16* pal = (u16*)HW_PLTT(0x0);
+     u16 b[2];
+     u16 g[2];
+     u16 r[2];
+@@ -301,7 +302,7 @@ u16* FadeAllPalettesToBlack(u16* src, u16 amount) {
+ }
+ 
+ u16* FadeAllPalettesToWhite(u16* src, u16 amount) {
+-    u16* pal = (u16*)0x05000000;
++    u16* pal = (u16*)HW_PLTT(0x0);
+     u16 bank;
+     u16 j;
+     u16 b[2];
+diff --git a/src/save.c b/src/save.c
+index 29d22733..430104bf 100644
+--- a/src/save.c
++++ b/src/save.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "save_api.h"
+ #include "agb_sram.h"
+ #include "gba/syscall.h"
+@@ -28,7 +29,7 @@ void ZeroFill(void* dst, s16 size) {
+     dma[0] = (u32)p;
+     dma[1] = (u32)dst;
+     dma[2] = 0x81000000 | (size / 2);
+-    dma[2];
++    DMA_READBACK(dma, 2);
+ }
+ 
+ void CopyBytes(const u8* src, u8* dst, s16 len) {
+@@ -701,21 +702,21 @@ void ShowSramErrorScreen(void) {
+     VBlankIntrWait();
+     dma = (vu32*)REG_ADDR_DMA3;
+     dma[0] = (u32)gSramErrorTiles;
+-    dma[1] = 0x06008000;
++    dma[1] = HW_VRAM(0x8000);
+     dma[2] = (DMA_ENABLE << 16) | 0x2000;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     dma[0] = (u32)gSramErrorPalette;
+-    dma[1] = 0x05000000;
++    dma[1] = HW_PLTT(0x0);
+     dma[2] = (DMA_ENABLE << 16) | 0x100;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     dma[0] = (u32)gSramErrorTilemap;
+     dma[1] = (u32)gSramErrorTilemapBuf;
+     dma[2] = (DMA_ENABLE << 16) | 0x280;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     dma[0] = (u32)gSramErrorTilemapBuf;
+-    dma[1] = 0x06000000;
++    dma[1] = HW_VRAM(0x0);
+     dma[2] = (DMA_ENABLE << 16) | 0x400;
+-    dma[2];
++    DMA_READBACK(dma, 2);
+     WaitSramErrorInput();
+     *ime = 0;
+     *ie &= ~INTR_FLAG_VBLANK;
+@@ -762,9 +763,9 @@ void WaitSramErrorInput(void) {
+             i++;
+             VBlankIntrWait();
+             dma[0] = (u32)gSramErrorTilemapBuf;
+-            dma[1] = 0x06000000;
++            dma[1] = HW_VRAM(0x0);
+             dma[2] = ((DMA_ENABLE | DMA_32BIT) << 16) | 0x200;
+-            dma[2];
++            DMA_READBACK(dma, 2);
+         } while (i <= 19);
+     }
+ 
+diff --git a/src/sio/mode_sio.c b/src/sio/mode_sio.c
+index 5f222b3a..042ab409 100644
+--- a/src/sio/mode_sio.c
++++ b/src/sio/mode_sio.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "mode_sio_dbg.h"
+ #include "mode_chkobj_assets.h"
+@@ -1122,12 +1123,12 @@ void func_080B0010(void) {
+                 gSioBtlOptionWork->unk_410++;
+             } else {
+                 gSioBtlOptionWork->unk_004 += 8;
+-                FadePaletteToBlack(gSioWorldEntries[a].palette, (u16*)0x05000000, gSioWorldEntries[a].paletteSize, gSioBtlOptionWork->unk_004);
++                FadePaletteToBlack(gSioWorldEntries[a].palette, (u16*)HW_PLTT(0x0), gSioWorldEntries[a].paletteSize, gSioBtlOptionWork->unk_004);
+             }
+         }
+         break;
+     case 1:
+-        FadePaletteToBlack(gSioWorldEntries[b].palette, (u16*)0x05000000, gSioWorldEntries[b].paletteSize, 32);
++        FadePaletteToBlack(gSioWorldEntries[b].palette, (u16*)HW_PLTT(0x0), gSioWorldEntries[b].paletteSize, 32);
+ #ifdef VERSION_EU
+         eu_080059F4(2, gSioWorldEntries[b].map);
+ #else
+@@ -1158,9 +1159,9 @@ void func_080B0010(void) {
+             } else {
+                 gSioBtlOptionWork->unk_004 -= 8;
+                 if (gSioBtlOptionWork->unk_004 == 0) {
+-                    LoadPaletteWithEffect(gSioWorldEntries[b].palette, (u16*)0x05000000, gSioWorldEntries[b].paletteSize);
++                    LoadPaletteWithEffect(gSioWorldEntries[b].palette, (u16*)HW_PLTT(0x0), gSioWorldEntries[b].paletteSize);
+                 } else {
+-                    FadePaletteToBlack(gSioWorldEntries[b].palette, (u16*)0x05000000, gSioWorldEntries[b].paletteSize, gSioBtlOptionWork->unk_004);
++                    FadePaletteToBlack(gSioWorldEntries[b].palette, (u16*)HW_PLTT(0x0), gSioWorldEntries[b].paletteSize, gSioBtlOptionWork->unk_004);
+                 }
+             }
+         }
+@@ -1396,7 +1397,7 @@ void func_080B0634(void) {
+     if (gUnk_0203A9E4 == 0) {
+ #endif
+     if (gUnk_02039810[1][0] == 0x2FCF) {
+-        RequestDma3Copy(gUnk_096B2724, (void*)0x06000020, 0xC0);
++        RequestDma3Copy(gUnk_096B2724, (void*)HW_VRAM(0x20), 0xC0);
+ 
+         if (gSioBtlOptionWork->unk_217 == 0) {
+             SetSioBtlOptionAnimation(0, 1, 1);
+@@ -1405,7 +1406,7 @@ void func_080B0634(void) {
+     }
+ 
+     if (gUnk_02039810[1][1] == 0x6AD6) {
+-        RequestDma3Copy(gUnk_096B2B24, (void*)0x06000300, 0xC0);
++        RequestDma3Copy(gUnk_096B2B24, (void*)HW_VRAM(0x300), 0xC0);
+ 
+         if (gSioBtlOptionWork->unk_218 == 0) {
+             SetSioBtlOptionAnimation(1, 1, 1);
+@@ -1415,7 +1416,7 @@ void func_080B0634(void) {
+ #ifdef VERSION_EU
+     } else {
+     if (gUnkEu_0203B108[0] == 1) {
+-        RequestDma3Copy(gUnk_096B2724, (void*)0x06000020, 0xC0);
++        RequestDma3Copy(gUnk_096B2724, (void*)HW_VRAM(0x20), 0xC0);
+ 
+         if (gSioBtlOptionWork->unk_217 == 0) {
+             SetSioBtlOptionAnimation(0, 1, 1);
+@@ -1424,7 +1425,7 @@ void func_080B0634(void) {
+     }
+ 
+     if (gUnkEu_0203B108[1] == 1) {
+-        RequestDma3Copy(gUnk_096B2B24, (void*)0x06000300, 0xC0);
++        RequestDma3Copy(gUnk_096B2B24, (void*)HW_VRAM(0x300), 0xC0);
+ 
+         if (gSioBtlOptionWork->unk_218 == 0) {
+             SetSioBtlOptionAnimation(1, 1, 1);
+@@ -1621,20 +1622,20 @@ void func_080B09C0(void) {
+     digits[1] = a / 10;
+     a %= 10;
+     digits[2] = a;
+-    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)0x06000100, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)0x06000120, 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)HW_VRAM(0x100), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)HW_VRAM(0x120), 32);
+ 
+     digits[0] = c / 100;
+     c %= 100;
+     digits[1] = c / 10;
+     c %= 10;
+     digits[2] = c;
+-    RequestDma3Copy(gUnk_096B2124 + digits[0] * 32, (void*)0x06000140, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)0x06000160, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)0x06000180, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[0] * 32, (void*)0x060001A0, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)0x060001C0, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)0x060001E0, 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[0] * 32, (void*)HW_VRAM(0x140), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)HW_VRAM(0x160), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)HW_VRAM(0x180), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[0] * 32, (void*)HW_VRAM(0x1A0), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)HW_VRAM(0x1C0), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)HW_VRAM(0x1E0), 32);
+ 
+     digits[0] = e / 1000;
+     e %= 1000;
+@@ -1643,10 +1644,10 @@ void func_080B09C0(void) {
+     digits[2] = e / 10;
+     e %= 10;
+     digits[3] = e;
+-    RequestDma3Copy(gUnk_096B2124 + digits[0] * 32, (void*)0x06000200, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)0x06000220, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)0x06000240, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[3] * 32, (void*)0x06000260, 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[0] * 32, (void*)HW_VRAM(0x200), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)HW_VRAM(0x220), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)HW_VRAM(0x240), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[3] * 32, (void*)HW_VRAM(0x260), 32);
+ 
+     digits[0] = g / 1000;
+     g %= 1000;
+@@ -1655,30 +1656,30 @@ void func_080B09C0(void) {
+     digits[2] = g / 10;
+     g %= 10;
+     digits[3] = g;
+-    RequestDma3Copy(gUnk_096B2124 + digits[0] * 32, (void*)0x06000280, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)0x060002A0, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)0x060002C0, 32);
+-    RequestDma3Copy(gUnk_096B2124 + digits[3] * 32, (void*)0x060002E0, 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[0] * 32, (void*)HW_VRAM(0x280), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[1] * 32, (void*)HW_VRAM(0x2A0), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[2] * 32, (void*)HW_VRAM(0x2C0), 32);
++    RequestDma3Copy(gUnk_096B2124 + digits[3] * 32, (void*)HW_VRAM(0x2E0), 32);
+ 
+     digits[0] = b / 100;
+     b %= 100;
+     digits[1] = b / 10;
+     b %= 10;
+     digits[2] = b;
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)0x060003E0, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)0x06000400, 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)HW_VRAM(0x3E0), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)HW_VRAM(0x400), 32);
+ 
+     digits[0] = d / 100;
+     d %= 100;
+     digits[1] = d / 10;
+     d %= 10;
+     digits[2] = d;
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[0] * 32, (void*)0x06000420, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)0x06000440, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)0x06000460, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[0] * 32, (void*)0x06000480, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)0x060004A0, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)0x060004C0, 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[0] * 32, (void*)HW_VRAM(0x420), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)HW_VRAM(0x440), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)HW_VRAM(0x460), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[0] * 32, (void*)HW_VRAM(0x480), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)HW_VRAM(0x4A0), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)HW_VRAM(0x4C0), 32);
+ 
+     digits[0] = f / 1000;
+     f %= 1000;
+@@ -1687,10 +1688,10 @@ void func_080B09C0(void) {
+     digits[2] = f / 10;
+     f %= 10;
+     digits[3] = f;
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[0] * 32, (void*)0x060004E0, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)0x06000500, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)0x06000520, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[3] * 32, (void*)0x06000540, 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[0] * 32, (void*)HW_VRAM(0x4E0), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)HW_VRAM(0x500), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)HW_VRAM(0x520), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[3] * 32, (void*)HW_VRAM(0x540), 32);
+ 
+     digits[0] = h / 1000;
+     h %= 1000;
+@@ -1699,10 +1700,10 @@ void func_080B09C0(void) {
+     digits[2] = h / 10;
+     h %= 10;
+     digits[3] = h;
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[0] * 32, (void*)0x06000560, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)0x06000580, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)0x060005A0, 32);
+-    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[3] * 32, (void*)0x060005C0, 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[0] * 32, (void*)HW_VRAM(0x560), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[1] * 32, (void*)HW_VRAM(0x580), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[2] * 32, (void*)HW_VRAM(0x5A0), 32);
++    RequestDma3Copy(gUnk_096B2124 + 0x400 + digits[3] * 32, (void*)HW_VRAM(0x5C0), 32);
+ }
+ void func_080B0F18(void) {
+     s8* base;
+@@ -1789,19 +1790,19 @@ void func_080B1134(u16 a, u16 b) {
+     case 3:
+     case 4:
+     case 5:
+-        LoadPalette(gUnk_096FBD64, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + 0x05000200), 32);
+-        LoadPalette(gUnk_096FBD64 + 0x22, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + 0x05000202), (6 - a) * 2);
++        LoadPalette(gUnk_096FBD64, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + HW_PLTT(0x200)), 32);
++        LoadPalette(gUnk_096FBD64 + 0x22, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + HW_PLTT(0x202)), (6 - a) * 2);
+         break;
+     case 6:
+-        LoadPalette(gUnk_096FBD64, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + 0x05000200), 32);
++        LoadPalette(gUnk_096FBD64, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + HW_PLTT(0x200)), 32);
+         break;
+     case 7:
+     case 8:
+     case 9:
+     case 10:
+     case 11:
+-        LoadPalette(gUnk_096FBD64, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + 0x05000200), 32);
+-        LoadPalette(gUnk_096FBD64 + 0x2C, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + 0x0500020C), (a - 6) * 2);
++        LoadPalette(gUnk_096FBD64, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + HW_PLTT(0x200)), 32);
++        LoadPalette(gUnk_096FBD64 + 0x2C, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[0])->index * 32 + HW_PLTT(0x20C)), (a - 6) * 2);
+         break;
+     }
+ 
+@@ -1811,27 +1812,27 @@ void func_080B1134(u16 a, u16 b) {
+     case 3:
+     case 4:
+     case 5:
+-        LoadPalette(gUnk_096FBDA4, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + 0x05000200), 32);
+-        LoadPalette(gUnk_096FBDA4 + 0x22, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + 0x05000202), (6 - b) * 2);
++        LoadPalette(gUnk_096FBDA4, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + HW_PLTT(0x200)), 32);
++        LoadPalette(gUnk_096FBDA4 + 0x22, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + HW_PLTT(0x202)), (6 - b) * 2);
+         break;
+     case 6:
+-        LoadPalette(gUnk_096FBDA4, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + 0x05000200), 32);
++        LoadPalette(gUnk_096FBDA4, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + HW_PLTT(0x200)), 32);
+         break;
+     case 7:
+     case 8:
+     case 9:
+     case 10:
+     case 11:
+-        LoadPalette(gUnk_096FBDA4, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + 0x05000200), 32);
+-        LoadPalette(gUnk_096FBDA4 + 0x2C, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + 0x0500020C), (b - 6) * 2);
++        LoadPalette(gUnk_096FBDA4, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + HW_PLTT(0x200)), 32);
++        LoadPalette(gUnk_096FBDA4 + 0x2C, (void*)(((ObjPalette*)gSioBtlOptionWork->palette5[1])->index * 32 + HW_PLTT(0x20C)), (b - 6) * 2);
+         break;
+     }
+ }
+ 
+ void func_080B1364(void) {
+     gSioBtlOptionWork->unk_228 = 0;
+-    RequestDma3Copy(gUnk_096B2664, (void*)0x06000020, 0xC0);
+-    RequestDma3Copy(gUnk_096B2664 + 0x400, (void*)0x06000300, 0xC0);
++    RequestDma3Copy(gUnk_096B2664, (void*)HW_VRAM(0x20), 0xC0);
++    RequestDma3Copy(gUnk_096B2664 + 0x400, (void*)HW_VRAM(0x300), 0xC0);
+     gSioBtlOptionWork->unk_217 = 0;
+     gSioBtlOptionWork->unk_218 = 0;
+     SetSioBtlOptionAnimation(0, 0, 0);
+@@ -2580,7 +2581,7 @@ void func_080B2480(void) {
+             SetSioChgCardAnimation(0, 1, 0);
+             m4aSongNumStart(SONG_SYS_KETTEI);
+         }
+-        RequestDma3Copy(gUnk_096B5FA4, (void*)0x06000020, 0xC0);
++        RequestDma3Copy(gUnk_096B5FA4, (void*)HW_VRAM(0x20), 0xC0);
+         gUnk_0203AB34[0] = 1;
+     } else if (gUnk_02039810[1][0] == 0x2B9A) {
+         if (gUnk_0203AB34[0] == 1) {
+@@ -2588,7 +2589,7 @@ void func_080B2480(void) {
+             m4aSongNumStart(SONG_SYS_CLOSE);
+             gSioChgCardWork->unk_20C = 0;
+         }
+-        RequestDma3Copy(gUnk_096B5EE4, (void*)0x06000020, 0xC0);
++        RequestDma3Copy(gUnk_096B5EE4, (void*)HW_VRAM(0x20), 0xC0);
+         gUnk_0203AB34[0] = 0;
+     }
+ 
+@@ -2597,7 +2598,7 @@ void func_080B2480(void) {
+             SetSioChgCardAnimation(1, 1, 0);
+             m4aSongNumStart(SONG_SYS_KETTEI);
+         }
+-        RequestDma3Copy(gUnk_096B63A4, (void*)0x060000E0, 0xC0);
++        RequestDma3Copy(gUnk_096B63A4, (void*)HW_VRAM(0xE0), 0xC0);
+         gUnk_0203AB34[1] = 1;
+     } else if (gUnk_02039810[1][1] == 0x2B9A) {
+         if (gUnk_0203AB34[1] == 1) {
+@@ -2605,7 +2606,7 @@ void func_080B2480(void) {
+             m4aSongNumStart(SONG_SYS_CLOSE);
+             gSioChgCardWork->unk_20C = 0;
+         }
+-        RequestDma3Copy(gUnk_096B62E4, (void*)0x060000E0, 0xC0);
++        RequestDma3Copy(gUnk_096B62E4, (void*)HW_VRAM(0xE0), 0xC0);
+         gUnk_0203AB34[1] = 0;
+     }
+ 
+@@ -2961,9 +2962,9 @@ void func_080B3204(void) {
+     digits[1] = v / 10;
+     v = v % 10;
+     digits[2] = v;
+-    RequestDma3Copy(&gUnk_096B5DA4[digits[0] * 32], (void*)0x060001A0, 32);
+-    RequestDma3Copy(&gUnk_096B5DA4[digits[1] * 32], (void*)0x060001C0, 32);
+-    RequestDma3Copy(&gUnk_096B5DA4[digits[2] * 32], (void*)0x060001E0, 32);
++    RequestDma3Copy(&gUnk_096B5DA4[digits[0] * 32], (void*)HW_VRAM(0x1A0), 32);
++    RequestDma3Copy(&gUnk_096B5DA4[digits[1] * 32], (void*)HW_VRAM(0x1C0), 32);
++    RequestDma3Copy(&gUnk_096B5DA4[digits[2] * 32], (void*)HW_VRAM(0x1E0), 32);
+ 
+     sum = 0;
+     for (j = 5; j < 10; j++) {
+@@ -2978,9 +2979,9 @@ void func_080B3204(void) {
+     digits[1] = v / 10;
+     v = v % 10;
+     digits[2] = v;
+-    RequestDma3Copy(&gUnk_096B5DA4[digits[0] * 32], (void*)0x06000200, 32);
+-    RequestDma3Copy(&gUnk_096B5DA4[digits[1] * 32], (void*)0x06000220, 32);
+-    RequestDma3Copy(&gUnk_096B5DA4[digits[2] * 32], (void*)0x06000240, 32);
++    RequestDma3Copy(&gUnk_096B5DA4[digits[0] * 32], (void*)HW_VRAM(0x200), 32);
++    RequestDma3Copy(&gUnk_096B5DA4[digits[1] * 32], (void*)HW_VRAM(0x220), 32);
++    RequestDma3Copy(&gUnk_096B5DA4[digits[2] * 32], (void*)HW_VRAM(0x240), 32);
+ }
+ 
+ void func_080B3354(void) {
+@@ -3120,20 +3121,20 @@ void func_080B3354(void) {
+         gSioChgCardWork->unk_074 = 0;
+ 
+         if (gFrameCounter % 10 == 0) {
+-            RequestDma3Copy(&gUnk_096B5EE4[gSioChgCardWork->unk_002 * 192], (void*)0x06000020, 0xC0);
++            RequestDma3Copy(&gUnk_096B5EE4[gSioChgCardWork->unk_002 * 192], (void*)HW_VRAM(0x20), 0xC0);
+             gSioChgCardWork->unk_002 = 1 - gSioChgCardWork->unk_002;
+         }
+     } else if (gSioChgCardWork->unk_076 == 11) {
+         gSioChgCardWork->unk_074 = 0;
+ 
+         if (gFrameCounter % 10 == 0) {
+-            RequestDma3Copy(&gUnk_096B62E4[gSioChgCardWork->unk_002 * 192], (void*)0x060000E0, 0xC0);
++            RequestDma3Copy(&gUnk_096B62E4[gSioChgCardWork->unk_002 * 192], (void*)HW_VRAM(0xE0), 0xC0);
+             gSioChgCardWork->unk_002 = 1 - gSioChgCardWork->unk_002;
+         }
+     } else {
+         gSioChgCardWork->unk_074 = 1;
+-        RequestDma3Copy(gUnk_096B5EE4, (void*)0x06000020, 0xC0);
+-        RequestDma3Copy(gUnk_096B5EE4 + 0x400, (void*)0x060000E0, 0xC0);
++        RequestDma3Copy(gUnk_096B5EE4, (void*)HW_VRAM(0x20), 0xC0);
++        RequestDma3Copy(gUnk_096B5EE4 + 0x400, (void*)HW_VRAM(0xE0), 0xC0);
+     }
+ }
+ 
+@@ -3186,7 +3187,7 @@ void func_080B397C(void) {
+     defs = gCardDefs;
+     def = &defs[n];
+     off = def->unk_2A << 5;
+-    LoadPalette(gUnk_096FBF84 + off, (void*)0x050000A0, 32);
++    LoadPalette(gUnk_096FBF84 + off, (void*)HW_PLTT(0xA0), 32);
+     LoadObjPaletteBank(((ObjPalette*)gSioChgCardWork->palette)->index, gUnk_096FBF04 + off);
+     nameId = def->unk_1C;
+     defs = (CardDef*)&defs->name;
+@@ -3221,8 +3222,8 @@ void func_080B3A68(void) {
+     gSioChgCardWork->unk_202 = gUnk_0203AB20[gSioChgCardWork->unk_076];
+     SetSioChgCardAnimation(0, 0, 0);
+     SetSioChgCardAnimation(1, 0, 0);
+-    RequestDma3Copy(gUnk_096B5EE4, (void*)0x06000020, 0xC0);
+-    RequestDma3Copy(gUnk_096B5EE4 + 0x400, (void*)0x060000E0, 0xC0);
++    RequestDma3Copy(gUnk_096B5EE4, (void*)HW_VRAM(0x20), 0xC0);
++    RequestDma3Copy(gUnk_096B5EE4 + 0x400, (void*)HW_VRAM(0xE0), 0xC0);
+     gUnk_0203AB34[0] = 0;
+     gUnk_0203AB34[1] = 0;
+     gSioChgCardWork->unk_20C = 0;
+diff --git a/src/sroll/mode_staffroll.c b/src/sroll/mode_staffroll.c
+index 9bee0c5d..fcb33ba0 100644
+--- a/src/sroll/mode_staffroll.c
++++ b/src/sroll/mode_staffroll.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "registration_data.h"
+ #include "system_state.h"
+ #include "mode.h"
+@@ -4140,24 +4141,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         DisableBg(0);
+         DisableBg(1);
+         DisableBg(2);
+@@ -4178,24 +4179,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         DisableBg(0);
+         DisableBg(1);
+         DisableBg(2);
+@@ -4214,24 +4215,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         DisableBg(0);
+         DisableBg(1);
+         DisableBg(2);
+@@ -4259,24 +4260,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         w->unk_0C4 = 0;
+         w->unk_0C8 = 0;
+         break;
+@@ -4293,24 +4294,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         DisableBg(0);
+         DisableBg(1);
+         DisableBg(2);
+@@ -4331,24 +4332,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         DisableBg(0);
+         DisableBg(1);
+         DisableBg(2);
+@@ -4369,24 +4370,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         DisableBg(0);
+         DisableBg(1);
+         DisableBg(2);
+@@ -4407,24 +4408,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         DisableBg(0);
+         DisableBg(1);
+         DisableBg(2);
+@@ -4445,24 +4446,24 @@ void mode_StaffRoll_1(void) {
+         tmp = 0;
+         dma = (vu32*)REG_ADDR_DMA3;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06000000;
++        dma[1] = HW_VRAM(0x0);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06004000;
++        dma[1] = HW_VRAM(0x4000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x06008000;
++        dma[1] = HW_VRAM(0x8000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x20;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         tmp = 0;
+         dma[0] = (vu32)&tmp;
+-        dma[1] = 0x0600C000;
++        dma[1] = HW_VRAM(0xC000);
+         dma[2] = ((DMA_ENABLE | DMA_SRC_FIXED) << 16) | 0x2000;
+-        dma[2];
++        DMA_READBACK(dma, 2);
+         DisableBg(0);
+         DisableBg(1);
+         DisableBg(2);
+diff --git a/src/sroll/sroll_a_name.c b/src/sroll/sroll_a_name.c
+index f57ae7c0..7baab776 100644
+--- a/src/sroll/sroll_a_name.c
++++ b/src/sroll/sroll_a_name.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "sroll.h"
+ #include "sprites_staff_roll.h"
+ #include "gba/io_reg.h"
+@@ -94,7 +95,7 @@ void task_sroll_a_name_2(SrollANameWork* w) {
+     if (w->unk_02 == 2) {
+         flags = 4;
+         ofs = AnimGetFrame(&w->anim) * 32 + 32;
+-        LoadPalette(&gUnk_09D6CD74[ofs], (u8*)0x05000220 + ((w->palette->index & 15) * 32), 32);
++        LoadPalette(&gUnk_09D6CD74[ofs], (u8*)HW_PLTT(0x220) + ((w->palette->index & 15) * 32), 32);
+     }
+     DrawSprite(x >> 8, y >> 8, AnimGetGfx(&w->anim), w->tiles, w->palette, 0, flags,
+                0xFF0 - w->unk_02);
+diff --git a/src/sroll/sroll_tmr.c b/src/sroll/sroll_tmr.c
+index 86313bbf..8116ce4d 100644
+--- a/src/sroll/sroll_tmr.c
++++ b/src/sroll/sroll_tmr.c
+@@ -1135,7 +1135,7 @@ void ScanlineDmaReset(void) {
+     dma = (vu16*)REG_ADDR_DMA0;
+     dma[5] &= ~(DMA_START_MASK | DMA_DREQ_ON | DMA_REPEAT);
+     dma[5] &= ~DMA_ENABLE;
+-    dma[5];
++    DMA_READBACK(dma, 5);
+     gDmaStream.unk_00 = 0;
+     gDmaStream.unk_01 = 0;
+     gDmaStream.update = 0;
+@@ -1154,7 +1154,7 @@ void ScanlineDmaUpdate(void) {
+     dma = (vu16*)REG_ADDR_DMA0;
+     dma[5] &= ~(DMA_START_MASK | DMA_DREQ_ON | DMA_REPEAT);
+     dma[5] &= ~DMA_ENABLE;
+-    dma[5];
++    DMA_READBACK(dma, 5);
+ 
+     if (gDmaStream.unk_00 != 0) {
+         if (gDmaStream.unk_01 != 0) {
+@@ -1178,7 +1178,7 @@ void ScanlineDmaUpdate(void) {
+             dma32[0] = (u32)gDmaStream.unk_18;
+             dma32[1] = (u32)gDmaStream.dst;
+             dma32[2] = gDmaStream.cnt;
+-            dma32[2];
++            DMA_READBACK(dma32, 2);
+         }
+ 
+         if (gDmaStream.update != 0) {
+diff --git a/src/taskpool.c b/src/taskpool.c
+index 36112797..b78fde46 100644
+--- a/src/taskpool.c
++++ b/src/taskpool.c
+@@ -1,3 +1,7 @@
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
++#include "gba/hwaddr.h"
+ #include "mode_battle_data.h"
+ #include "registration_data.h"
+ #include "chara_api.h"
+@@ -231,7 +235,7 @@ s32 func_08000F90(void) {
+ 
+ void ModeBlankDisplay(void) {
+     REG_DISPCNT &= ~(DISPCNT_BG_ALL_ON | DISPCNT_OBJ_ON);
+-    *(vu16*)0x05000000 = gUnk_0300749E;
++    *(vu16*)HW_PLTT(0x0) = gUnk_0300749E;
+ }
+ 
+ void ModeStart(Mode* mode, s32 arg) {
+@@ -242,6 +246,9 @@ void ModeStart(Mode* mode, s32 arg) {
+     FadeReset();
+     MosaicReset();
+     gCurrentMode = mode;
++#ifdef PLATFORM_VITA
++    PortLog("ModeStart %p (init %p, arg %d)", (void*)mode, (void*)mode->init, (int)arg);
++#endif
+ 
+     if (mode->init != 0) {
+         mode->init(arg);
+diff --git a/src/title/mode_title.c b/src/title/mode_title.c
+index f8cf2fff..02d9f2e0 100644
+--- a/src/title/mode_title.c
++++ b/src/title/mode_title.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "registration_data.h"
+ #include "title_api.h"
+@@ -34,7 +35,7 @@ void func_080D5978(u16 a, void* b, u16 c) {
+ }
+ 
+ void func_080D5998(void) {
+-    LoadPalette(gUnk_02034EC4, (void*)0x05000000, 0x400);
++    LoadPalette(gUnk_02034EC4, (void*)HW_PLTT(0x0), 0x400);
+ }
+ 
+ void func_080D59B4(void) {
+diff --git a/src/title/wlogo.c b/src/title/wlogo.c
+index e66dcfd7..99ffa96a 100644
+--- a/src/title/wlogo.c
++++ b/src/title/wlogo.c
+@@ -1,3 +1,4 @@
++#include "gba/hwaddr.h"
+ #include "macros.h"
+ #include "registration_data.h"
+ #include "chara_api.h"
+@@ -92,11 +93,11 @@ u8 task_wlogo_mons_1(WlogoMonsWork* work) {
+ 
+             if (work->unk_028 <= 4) {
+                 LoadObjPaletteBank(work->palette->index, &gUnk_096FACC4[work->unk_028 * 32]);
+-                LoadPaletteWithEffect(&gUnk_096FACC4[work->unk_028 * 32], (void*)0x050001C0, 0x20);
++                LoadPaletteWithEffect(&gUnk_096FACC4[work->unk_028 * 32], (void*)HW_PLTT(0x1C0), 0x20);
+             } else if (work->unk_028 > 11) {
+                 if (work->unk_028 <= 15) {
+                     LoadObjPaletteBank(work->palette->index, &gUnk_096FACC4[(15 - work->unk_028) * 32]);
+-                    LoadPaletteWithEffect(&gUnk_096FACC4[(15 - work->unk_028) * 32], (void*)0x050001C0, 0x20);
++                    LoadPaletteWithEffect(&gUnk_096FACC4[(15 - work->unk_028) * 32], (void*)HW_PLTT(0x1C0), 0x20);
+                 } else if (work->unk_028 == 20) {
+                     work->unk_02D = 0;
+                     RequestDma3Copy(gUnk_096B7464, GetBgScreenBase(0), 0x800);
+@@ -1463,7 +1464,7 @@ void task_wlogo_tt_0(WlogoTtWork* work) {
+     LoadBgPalette(0, gUnk_096FAE84, 0x20);
+     LoadBgTiles(0, gUnk_09648EA4, 0x1260);
+     LoadBgMap(0, gUnk_096BE464, 0x800);
+-    LoadPalette(&gUnk_096FAEA4[15 * 32], (void*)0x050001E0, 0x20);
++    LoadPalette(&gUnk_096FAEA4[15 * 32], (void*)HW_PLTT(0x1E0), 0x20);
+     work->unk_002 = 0;
+     work->unk_004 = 0;
+     work->state = 0;
+@@ -1652,7 +1653,7 @@ u8 task_wlogo_tt_1(WlogoTtWork* work) {
+     case 9:
+         work->unk_100[6] = 0;
+         LoadBgMap(0, gUnk_096BDC64, 0x800);
+-        LoadPalette(gUnk_096FAFA4, (void*)0x050001C0, 0x20);
++        LoadPalette(gUnk_096FAFA4, (void*)HW_PLTT(0x1C0), 0x20);
+         EnableBg(0);
+         work->unk_006 = 16;
+         SetBgBlend(0, 0, 16);
+@@ -1682,7 +1683,7 @@ u8 task_wlogo_tt_1(WlogoTtWork* work) {
+         } else if (work->unk_004 > 1) {
+             work->unk_004 = 0;
+             work->unk_007--;
+-            LoadPalette(&gUnk_096FAEA4[work->unk_007 * 32], (void*)0x050001C0, 0x20);
++            LoadPalette(&gUnk_096FAEA4[work->unk_007 * 32], (void*)HW_PLTT(0x1C0), 0x20);
+         } else {
+             work->unk_004++;
+         }
+@@ -1968,7 +1969,7 @@ u8 task_wlogo_bks_1(WlogoBksWork* work) {
+         if (work->unk_004 <= 6) {
+             if (++work->unk_002 >= gUnk_09EF1C48[work->unk_004]) {
+                 work->unk_002 = 0;
+-                LoadPalette(&gUnk_096FB0C4[gUnk_09EF1C50[work->unk_004] * 32], (void*)0x050001C0, 0x20);
++                LoadPalette(&gUnk_096FB0C4[gUnk_09EF1C50[work->unk_004] * 32], (void*)HW_PLTT(0x1C0), 0x20);
+                 work->unk_004++;
+             }
+         }
+@@ -1977,7 +1978,7 @@ u8 task_wlogo_bks_1(WlogoBksWork* work) {
+             StopBgWave(0);
+             work->unk_002 = 0;
+             work->unk_030 = 0;
+-            LoadPalette(gUnk_096FB0C4, (void*)0x050001C0, 0x20);
++            LoadPalette(gUnk_096FB0C4, (void*)HW_PLTT(0x1C0), 0x20);
+             LoadBgMap(0, gUnk_096BF464, 0x800);
+             work->unk_000++;
+         } else {

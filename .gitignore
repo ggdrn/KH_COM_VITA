@@ -1,0 +1,16 @@
+# Working tree created by scripts/setup.sh (decompilation + ROM-derived data)
+/khcom/
+
+# Game data and build outputs are never committed
+*.gba
+*.vpk
+*.velf
+*.elf
+*.psp2dmp
+*.psp2dmp.tmp
+build/
+
+# Sony's shader compiler: extract it from your own console
+libshacccg.suprx
+
+.DS_Store
