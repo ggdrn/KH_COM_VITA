@@ -124,6 +124,17 @@ void PortSetBgStream(int bg, const void* const* map, int width, int height, int 
 }
 
 static int sUiOverlays;
+static int sStretchCount[4];
+
+void PortStretchBgEdges(int bg, int delta) {
+    if (bg < 0 || bg > 3) {
+        return;
+    }
+    sStretchCount[bg] += delta;
+    if (sStretchCount[bg] < 0) {
+        sStretchCount[bg] = 0;
+    }
+}
 
 void PortUiOverlay(int delta) {
     sUiOverlays += delta;
@@ -144,6 +155,8 @@ void PortCaptureSubmit(void) {
 
     memcpy(f->streams, sStreams, sizeof(f->streams));
     f->clipObjs = sUiOverlays > 0;
+    f->stretchMask = (sStretchCount[0] > 0) | (sStretchCount[1] > 0) << 1 | (sStretchCount[2] > 0) << 2 |
+                     (sStretchCount[3] > 0) << 3;
     memcpy(f->pltt, gGbaPltt, sizeof(f->pltt));
     memcpy(f->oam, gGbaOam, sizeof(f->oam));
     memcpy(f->vram, gGbaVram, sizeof(f->vram));

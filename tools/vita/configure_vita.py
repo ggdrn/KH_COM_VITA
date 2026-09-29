@@ -175,6 +175,38 @@ def align_blob_unit(src, dst_dir, version, gba_addrs=None):
     return str(dst)
 
 
+def gba_sections(version):
+    """{GBA object path: {section: (start, size)}} from the GBA link map."""
+    rx = re.compile(r"^ (\.\w+)\s+0x([0-9a-f]+)\s+0x([0-9a-f]+) (\S+\.o)$")
+    out = {}
+    for line in Path(f"build/{version}/com_{version}.map").read_text().splitlines():
+        m = rx.match(line)
+        if m and int(m[3], 16):
+            out.setdefault(m[4], {})[m[1]] = (int(m[2], 16), int(m[3], 16))
+    return out
+
+
+def contiguous_data_units(units, version, gba_build, out_dir):
+    """Data units that directly follow another data unit in the GBA ROM.
+
+    Code sometimes reaches past the end of one table into the next unit (a
+    palette at gUnk_099910C4 + 0x240 lives in the following unit), so those
+    must stay back to back on the Vita too: they keep their own alignment and
+    are not re-anchored by align_blob_unit, which would open a gap."""
+    sections = gba_sections(version)
+    last = {}  # section -> (end address, is a data unit)
+    out = set()
+    for src, obj, _flags in units:
+        gba_obj = str(obj).replace(str(out_dir), gba_build, 1)
+        is_data = Path(src).suffix != ".c"
+        for sec, (start, size) in sorted(sections.get(gba_obj, {}).items(), key=lambda kv: kv[1][0]):
+            prev = last.get(sec)
+            if is_data and prev is not None and prev[1] and prev[0] == start:
+                out.add(str(obj))
+            last[sec] = (start + size, is_data)
+    return out
+
+
 def write_romxlate(path, version, gba_objs, aliases):
     """C table mapping GBA ROM addresses of global data symbols to their Vita
     addresses, for GbaPtr() to translate pointers stored in binary ROM data.
@@ -339,13 +371,14 @@ def main():
                                 for p in [pool.header(version)] + pool.fragment_paths(version)])
 
         objs = []
+        contiguous = contiguous_data_units(units, version, gba_build, out_dir)
         for src, obj, _flags in units:
             src = Path(src)
             if src.suffix == ".c":
                 n.build(obj, "cc_game", str(src), order_only=gen_headers)
             else:
                 deps = [os.path.relpath(p) for p in generated[src.name][1]["binaries"]] if src.name in generated else []
-                aligned = align_blob_unit(src, out_dir / "aligned", version, gba_addrs)
+                aligned = None if str(obj) in contiguous else align_blob_unit(src, out_dir / "aligned", version, gba_addrs)
                 n.build(obj, "as", aligned or str(src), implicit=deps)
             objs.append(obj)
         for src in port_game:
@@ -385,11 +418,17 @@ def main():
         n.build(sfo, "sfo", implicit=["tools/vita/configure_vita.py", "port/vita/VERSION"],
                 variables={"titleid": "KHCOM0001", "title": "Kingdom Hearts: Chain of Memories",
                            "appver": f"{int(minor):02d}.{int(patch_level):02d}"})
-        extra = []
-        for p in sorted(Path("port/vita/sce_sys").rglob("*")):
-            if p.is_file():
-                extra.append(f"-a {p}={p.relative_to('port/vita')}")
-        n.build(vpk, "vpk", [eboot, sfo], variables={"sfo": sfo, "eboot": eboot, "extra": " ".join(extra)})
+        # LiveArea images, converted to the sizes and 8-bit palette format the
+        # Vita requires (tools/vita/livearea.py); hidden files are left out.
+        sce_src = [p for p in sorted(Path("port/vita/sce_sys").rglob("*"))
+                   if p.is_file() and not any(part.startswith(".") for part in p.relative_to("port/vita").parts)]
+        sce_out = [str(out_dir / p.relative_to("port/vita")) for p in sce_src]
+        n.rule("livearea", "python3 tools/vita/livearea.py port/vita/sce_sys $outdir", description="LIVEAREA")
+        n.build(sce_out, "livearea", implicit=[str(p) for p in sce_src] + ["tools/vita/livearea.py"],
+                variables={"outdir": str(out_dir / "sce_sys")})
+        extra = [f"-a {o}={p.relative_to('port/vita')}" for p, o in zip(sce_src, sce_out)]
+        n.build(vpk, "vpk", [eboot, sfo], implicit=sce_out,
+                variables={"sfo": sfo, "eboot": eboot, "extra": " ".join(extra)})
         n.build("vpk", "phony", vpk)
         # Re-run this script when the version or the script itself changes.
         n.rule("configure", "python3 tools/vita/configure_vita.py --version $version",

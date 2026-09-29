@@ -545,7 +545,12 @@ void VBlankIntrWait(void) {
             dispstat |= DISPSTAT_VCOUNT;
             IO16(REG_OFFSET_DISPSTAT) = dispstat;
             if (dispstat & DISPSTAT_VCOUNT_INTR) {
+                /* Handlers may busy-wait for this line's HBlank (the Pooh
+                 * world's map split, poo.c): time does not pass inside them
+                 * here, so report HBlank already reached. */
+                IO16(REG_OFFSET_DISPSTAT) = dispstat | DISPSTAT_HBLANK;
                 GbaRaiseIrq(2);
+                IO16(REG_OFFSET_DISPSTAT) &= ~DISPSTAT_HBLANK;
             }
         }
         IO16(REG_OFFSET_DISPSTAT) = dispstat;

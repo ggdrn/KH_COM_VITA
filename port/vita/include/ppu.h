@@ -24,6 +24,7 @@ typedef struct PpuBgStream {
 typedef struct PpuFrame {
     PpuBgStream streams[4];
     int clipObjs; /* sprites only in the original 240 columns (PortUiOverlay) */
+    int stretchMask; /* BGs whose box edges reach the screen edges (PortStretchBgEdges) */
     uint8_t io[GBA_SCREEN_HEIGHT][PPU_LINE_IO_SIZE];
     uint8_t pltt[0x400];
     uint8_t oam[0x400];

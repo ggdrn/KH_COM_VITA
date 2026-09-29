@@ -4,7 +4,8 @@
  *   D-pad / left stick  -> D-pad
  *   Cross / Circle      -> A / B (swap with swap_ab=1 in config.ini)
  *   L / R               -> L / R
- *   Triangle            -> L + R together (sleights)
+ *   Triangle            -> tap: L + R together (stock a card / sleight);
+ *                          hold: return the stocked cards to the hand
  *   Square              -> dodge roll (see btl.c, task_btl_sora_1)
  *   Start / Select      -> Start / Select
  */
@@ -30,6 +31,25 @@ uint8_t gPortDodgePressed;
 
 static uint16_t sKeys;
 static uint32_t sPrevButtons;
+
+/* Triangle is resolved when released (tap: L + R) or after TRIANGLE_HOLD
+ * frames (hold: unstock), since a tap with three stocked cards already
+ * performs the sleight. */
+#define TRIANGLE_HOLD 24
+#define TRIANGLE_TAP_FRAMES 3
+#define UNSTOCK_PENDING_FRAMES 6
+static int sTriangleFrames;
+static int sTriangleFired;
+static int sTriangleTap;
+static int sUnstockPending;
+
+int PortTakeUnstockRequest(void) {
+    if (sUnstockPending > 0) {
+        sUnstockPending = 0;
+        return 1;
+    }
+    return 0;
+}
 
 void InputInit(void) {
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
@@ -60,7 +80,26 @@ void InputPoll(void) {
     if (b & SCE_CTRL_RTRIGGER) keys |= GBA_R;
     if (b & SCE_CTRL_START) keys |= GBA_START;
     if (b & SCE_CTRL_SELECT) keys |= GBA_SELECT;
-    if (b & SCE_CTRL_TRIANGLE) keys |= GBA_L | GBA_R;
+    if (b & SCE_CTRL_TRIANGLE) {
+        if (++sTriangleFrames == TRIANGLE_HOLD) {
+            sTriangleFired = 1;
+            sUnstockPending = UNSTOCK_PENDING_FRAMES;
+        }
+    } else {
+        if (sTriangleFrames > 0 && !sTriangleFired) {
+            sTriangleTap = TRIANGLE_TAP_FRAMES;
+        }
+        sTriangleFrames = 0;
+        sTriangleFired = 0;
+    }
+    if (sTriangleTap > 0) {
+        sTriangleTap--;
+        keys |= GBA_L | GBA_R;
+    }
+    /* A request no battle picked up expires instead of firing later. */
+    if (sUnstockPending > 0 && !(b & SCE_CTRL_TRIANGLE)) {
+        sUnstockPending--;
+    }
 
     /* Opposite directions cancel out, as on the real pad. */
     if ((keys & (GBA_LEFT | GBA_RIGHT)) == (GBA_LEFT | GBA_RIGHT)) {

@@ -31,7 +31,8 @@ Early and experimental (see `port/vita/VERSION`).
   scrolling map in video memory, so the extra columns are drawn straight from the game's full map: the
   scenery really continues past the original edges, and sprites stay visible there. `fit` (original 3:2 with
   side bars) and `stretch` modes are also available.
-- **Triangle = L + R** together (sleights), without pressing both shoulder buttons.
+- **Triangle = L + R** together (stock a card / sleight), without pressing both shoulder buttons.
+  **Hold Triangle** to return the stocked cards to your hand (Sora and Riku), which the GBA version can't do.
 - **Square = dodge roll**: rolls toward the direction you are holding, or the way the character faces. On the
   GBA this needs a double tap on the D-pad. Works for Sora and Riku.
 - Left analog stick works as the D-pad.
@@ -44,7 +45,7 @@ Early and experimental (see `port/vita/VERSION`).
 | D-pad / left stick | D-pad |
 | Cross / Circle | A / B (swap with `swap_ab=1`) |
 | L / R | L / R |
-| Triangle | L + R (sleight) |
+| Triangle | L + R (stock / sleight); hold: unstock the cards |
 | Square | Dodge roll |
 | Start / Select | Start / Select |
 
@@ -84,7 +85,7 @@ Tested on macOS (Apple Silicon). Linux works with the equivalent packages.
   ```
   For the Vita3K emulator, build it with `NO_SPLASHSCREEN=1` instead: the vitaGL splash screen uses a
   second GPU context, which Vita3K does not support.
-- `git`, `ninja`, `python3` with `pyyaml`
+- `git`, `ninja`, `python3` with `pyyaml` and `pillow` (LiveArea images)
 - `arm-none-eabi-binutils` (used for the reference GBA build)
 - `libpng` and `pkg-config` (for the decomp's `gbagfx` tool)
 - [agbcc](https://github.com/pret/agbcc) and the decomp's legacy toolchain (see step 3)
@@ -98,7 +99,7 @@ git clone https://github.com/ggdrn/KH_COM_VITA.git
 cd KH_COM_VITA
 scripts/setup.sh              # creates ./khcom: the decomp at the right commit + this port
 cd khcom
-python3 -m venv .venv && .venv/bin/pip install pyyaml -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install pyyaml pillow -r requirements.txt
 export PATH="$PWD/.venv/bin:$PATH"
 cp /path/to/your/rom.gba roms/B8CE.gba
 ```

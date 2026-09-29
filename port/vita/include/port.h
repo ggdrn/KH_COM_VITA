@@ -43,10 +43,16 @@ void PortCodeEndWrite(void);
 void PortSetBgStream(int bg, const void* const* map, int width, int height, int worldX, int worldY,
                      int shadowHofs, int shadowVofs);
 void PortCaptureBgStreams(void);
-/* A 240-pixel UI screen drawn over the scene is open (+1) or closed (-1):
- * while any is open, sprites stay inside the original 240 columns, as the
- * UI moves things out of view by placing them off the GBA screen. */
+/* A 240-pixel UI screen is open (+1) or closed (-1): while any is open the
+ * widescreen margins are black bars and sprites stay inside the original 240
+ * columns, as the UI moves things out of view by placing them off screen. */
 void PortUiOverlay(int delta);
+/* A dialogue box on this BG is open (+1) or closed (-1): in widescreen its
+ * left and right edges are moved to the screen edges and the inside is
+ * extended between them (see ppu.c StretchBoxEdges). */
+void PortStretchBgEdges(int bg, int delta);
+/* Triangle was held: return the stocked cards to the hand (card battles). */
+int PortTakeUnstockRequest(void);
 /* GBA bus address -> host memory, or NULL (used by the fault handler). */
 void* GbaPtrQuiet(uint32_t addr);
 /* Frame capture for the render thread (see vita_render.c). */
