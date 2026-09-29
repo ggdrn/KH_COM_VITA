@@ -595,6 +595,26 @@ index 465653e2c..bc06d7f9a 100644
      }
  
      if (p->unk_0E8 == 3) {
+diff --git a/src/btl/btl_actor.c b/src/btl/btl_actor.c
+index e8f040b59..774e82a1c 100644
+--- a/src/btl/btl_actor.c
++++ b/src/btl/btl_actor.c
+@@ -437,7 +437,15 @@ u8 func_0800F5A4(HumWork* work, u16 interval, u16 offset, u16 width, u16 depth)
+             gBtlWork->unk_0EF |= 0x10;
+             return 1;
+         }
++#ifdef PLATFORM_VITA
++        /*
++         * Some enemies have no card list (unk_184 == NULL); the GBA then reads a
++         * BIOS word, which never equals a card id.
++         */
++        if (value == 0 || work->unk_184 == 0 || work->unk_184[cards] != id) {
++#else
+         if (value == 0 || work->unk_184[cards] != id) {
++#endif
+             gBtlWork->unk_0EF |= 1;
+         } else {
+             gBtlWork->unk_0EF |= 0x10;
 diff --git a/src/card/card_battle.c b/src/card/card_battle.c
 index 1f4e51769..a7af71006 100644
 --- a/src/card/card_battle.c

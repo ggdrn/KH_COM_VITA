@@ -199,6 +199,15 @@ def main():
     symbols = parse_symbols(version)
     regional_plan = load_sidecars("config")["regions"][version]
     symbols.extend(asset_symbols(regional_plan, symbols))
+    # Weak import stubs for optional kernel plugins (port/vita/stubs/*.yml).
+    stub_dir = out_dir / "stubs"
+    stub_dir.mkdir(parents=True, exist_ok=True)
+    for yml in sorted(Path("port/vita/stubs").glob("*.yml")):
+        env = dict(os.environ, VITASDK=args.vitasdk, PATH=f"{sdk_bin}:{os.environ['PATH']}")
+        subprocess.run([str(sdk_bin / "vita-libs-gen"), str(yml), str(stub_dir)], check=True, env=env,
+                       stdout=subprocess.DEVNULL)
+        subprocess.run(["make", "-s", "-C", str(stub_dir)], check=True, env=env, stdout=subprocess.DEVNULL)
+
     romsyms = out_dir / "romsyms.ld"
     write_romsyms(romsyms, version, symbols)
 
@@ -316,7 +325,7 @@ def main():
         objs.append(str(romsyms))
         n.newline()
 
-        libs = ["-lvitaGL", "-lvitashark", "-lSceShaccCgExt", "-lmathneon", "-ltaihen_stub",
+        libs = [f"-L{stub_dir}", "-lkubridge_stub_weak", "-lvitaGL", "-lvitashark", "-lSceShaccCgExt", "-lmathneon", "-ltaihen_stub",
                 "-lSceShaccCg_stub", "-lSceKernelDmacMgr_stub", "-lSceGxm_stub", "-lSceDisplay_stub",
                 "-lSceCtrl_stub", "-lSceTouch_stub", "-lSceAudio_stub", "-lSceAppMgr_stub",
                 "-lSceAppUtil_stub", "-lSceCommonDialog_stub", "-lSceSysmodule_stub", "-lScePower_stub",

@@ -1,0 +1,17 @@
+# Imports used by port/vita/host/vita_fault.c from the kubridge kernel plugin
+# (https://github.com/bythos14/kubridge). Built into weak stubs, so the game
+# still starts when the plugin is not installed (it then runs without the
+# fault handler). The library NID is sha256("kubridge"), which is what
+# vita-elf-export assigns to kubridge's export when none is given.
+version: 2
+firmware: 3.60
+modules:
+  kubridge:
+    nid: 0x6DB9389B
+    libraries:
+      kubridge:
+        kernel: false
+        nid: 0x6DB9389B
+        functions:
+          kuKernelRegisterExceptionHandler: 0xF9025D19
+          kuKernelReleaseExceptionHandler: 0xDF9F3BED

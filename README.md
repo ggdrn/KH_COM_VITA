@@ -19,7 +19,7 @@ Early and experimental (see `port/vita/VERSION`).
 |---|---|
 | Boot, title screen, new game, story events, field | Working |
 | Frame rate | Stable 60 fps on hardware (rendering takes ~3–6 ms per frame, split over two cores) |
-| Battles | Being tested: the first battle starts; fixes for card/friend-card crashes are in progress |
+| Battles | The first battle and its tutorial complete; later areas are being tested |
 | Opening/ending movies (FMV) | Skipped (their decoder is GBA machine code that hasn't been ported yet) |
 | Music and sound effects | DirectSound channels working; the GBA's PSG ("Game Boy") channels are silent |
 | Saving | Working (`ux0:data/khcom/khcom.sav`) |
@@ -55,7 +55,12 @@ Early and experimental (see `port/vita/VERSION`).
    [this guide](https://samilops2.gitbook.io/vita-troubleshooting-guide/shader-compiler/extract-libshacccg.suprx);
    it must end up at `ur0:data/libshacccg.suprx`. It is Sony software and is not distributed here.
 2. Copy the built `khcom_us_vX.XX.XX.vpk` to the Vita (e.g. with VitaShell over FTP/USB) and install it.
-3. Run it. On first launch it creates `ux0:data/khcom/`:
+3. **Recommended: the [kubridge](https://github.com/bythos14/kubridge/releases) kernel plugin**
+   (`ur0:tai/kubridge.skprx` under `*KERNEL` in `ur0:tai/config.txt`, then reboot). With it, the port handles
+   the game's reads/writes through NULL pointers and raw GBA addresses the way the GBA does instead of
+   crashing (see "How it works"). Without it the game still runs, but those spots crash. The log says
+   `fault handler: active` when it is in use.
+4. Run it. On first launch it creates `ux0:data/khcom/`:
 
 | File | Purpose |
 |---|---|
@@ -145,12 +150,15 @@ configure step by itself when `port/vita/VERSION` or the build script changes.
 | Video | `port/vita/host/ppu.c`, `vita_render.c`, `vita_video.c` | Scanline renderer for the GBA picture processor (tile/affine/bitmap backgrounds, sprites, windows, blending, mosaic), run on two cores and presented with vitaGL |
 | Widescreen | `port/vita/game/widescreen.c`, `ppu.c` | Captures each streamed map's camera after VBlank; the renderer fetches the widescreen margins from the full map |
 | Input | `port/vita/host/vita_input.c`, dodge hooks in `src/btl/btl.c` | Button mapping, Triangle → L+R, Square → dodge roll |
+| GBA-style faults | `port/vita/host/vita_fault.c` | With kubridge, a data-abort handler decodes the faulting Thumb-2 load/store and performs it as the GBA would: BIOS-region reads return the BIOS open-bus value, writes there are dropped, raw GBA addresses are translated. Each emulated site is logged once |
+| Freeze watchdog | `port/vita/host/vita_fault.c` | If the game loop stops for 5 s, logs the state and forces a crash dump so a freeze can be located |
 | Decomp changes | `patches/khcom-vita.patch` | Hardware addresses routed through macros that still expand to the original values on GBA, plus Vita-only fixes. The GBA build still produces a byte-identical ROM |
 
 ## Debugging
 
 - `ux0:data/khcom/log.txt` shows the startup steps, every game mode change and per-second timings
-  (`logic`, `render`, `present`, worst frame).
+  (`logic`, `render`, `present`, worst frame), plus `fault:` lines for accesses emulated by the fault handler
+  and `watchdog:` lines when the game freezes. `FaultInit=` in the log gives the module load address.
 - When the game crashes the Vita writes `ux0:data/psp2core-*.psp2dmp`. Wait until the file no longer ends in
   `.tmp` before copying it (a partial `.tmp` still holds the thread registers), then run:
   ```sh

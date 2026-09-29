@@ -217,6 +217,7 @@ void PortVBlankWait(void) {
     PORT_TRACE_EARLY("present: InputPoll");
     InputPoll();
     AudioPump();
+    FaultPoll();
     if (sSramDirtyFrames > 0 && --sSramDirtyFrames == 0) {
         PortFlushSram();
     }
@@ -237,6 +238,7 @@ int main(void) {
     /* Core 0: game logic, core 1: rendering (vita_render.c), core 2: audio. */
     sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
     LoadConfig();
+    FaultInit();
     LoadSram();
     VideoInit();
     InputInit();
@@ -245,6 +247,7 @@ int main(void) {
     /* KEYINPUT is active low: start with every button released, or the
      * first frame reads A+B+Start+Select held (the soft-reset combo). */
     ((uint16_t*)gGbaIo)[0x130 / 2] = 0x3FF;
+    WatchdogInit();
     PortLog("init done, entering AgbMain");
     AgbMain();
     return 0;

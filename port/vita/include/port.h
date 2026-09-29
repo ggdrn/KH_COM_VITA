@@ -35,6 +35,8 @@ void PortAudioPush(const int8_t* right, const int8_t* left, int samples, int rat
 void PortSetBgStream(int bg, const void* const* map, int width, int height, int worldX, int worldY,
                      int shadowHofs, int shadowVofs);
 void PortCaptureBgStreams(void);
+/* GBA bus address -> host memory, or NULL (used by the fault handler). */
+void* GbaPtrQuiet(uint32_t addr);
 /* Frame capture for the render thread (see vita_render.c). */
 void PortCaptureLine(int y);
 void PortCaptureSubmit(void);

@@ -47,6 +47,50 @@ typedef struct RomXlate {
 extern const RomXlate gRomXlate[];
 extern const u32 gRomXlateCount;
 
+static void* RomToHostQuiet(u32 addr) {
+    u32 lo = 0, hi = gRomXlateCount;
+
+    while (hi - lo > 1) {
+        u32 mid = (lo + hi) / 2;
+        if (gRomXlate[mid].gba <= addr) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    if (gRomXlateCount == 0 || gRomXlate[lo].gba > addr) {
+        return NULL;
+    }
+    return (void*)(gRomXlate[lo].host + (addr - gRomXlate[lo].gba));
+}
+
+/*
+ * Maps a GBA bus address to host memory for the fault handler; NULL when the
+ * address has no host equivalent (BIOS, work RAM addresses, unmapped space).
+ */
+void* GbaPtrQuiet(uint32_t addr) {
+    switch (addr >> 24) {
+    case 0x04:
+        return (addr & 0xFFFFFF) < 0x400 ? &gGbaIo[addr & 0x3FF] : NULL;
+    case 0x05:
+        return &gGbaPltt[addr & 0x3FF];
+    case 0x06:
+        addr &= 0x1FFFF;
+        if (addr >= 0x18000) {
+            addr -= 0x8000;
+        }
+        return &gGbaVram[addr];
+    case 0x07:
+        return &gGbaOam[addr & 0x3FF];
+    case 0x08:
+    case 0x09:
+        return RomToHostQuiet(addr);
+    case 0x0E:
+        return &gGbaSram[addr & 0xFFFF];
+    }
+    return NULL;
+}
+
 static void* RomToHost(u32 addr) {
     u32 lo = 0, hi = gRomXlateCount;
 

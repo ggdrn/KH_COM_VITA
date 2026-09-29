@@ -36,6 +36,10 @@ void VideoInit(void);
 void VideoPresent(void);
 void VideoShowFatal(const char* msg);
 
+void FaultInit(void);
+void FaultPoll(void);
+void WatchdogInit(void);
+
 void InputInit(void);
 void InputPoll(void);
 
