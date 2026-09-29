@@ -145,6 +145,37 @@ def write_romsyms(path, version, symbols):
     path.write_text("\n".join(lines) + "\n")
 
 
+def align_blob_unit(src, dst_dir, version, gba_addrs=None):
+    """Copy of an address-bounded ROM data unit that starts at the same
+    address modulo 16 as on the GBA.
+
+    Several blobs start at odd GBA addresses (e.g. map_room_tables.s at
+    0x0984C3CF) while tables inside them are word aligned and read with
+    LDM/LDRD, which fault on unaligned addresses on the Vita. Returns the
+    path to assemble, or None when the unit needs no change."""
+    text = Path(src).read_text()
+    m = re.search(r'\.incbin\s+"assets/' + version + r'/([0-9A-F]{8})-[0-9A-F]{8}\.bin"', text)
+    label = re.search(r"^(\w+):", text, re.M)
+    if not label:
+        return None
+    if m:
+        start = int(m[1], 16)
+    elif gba_addrs and label[1] in gba_addrs:
+        # Generated asset units: the first label's address in the GBA build.
+        start = gba_addrs[label[1]]
+    else:
+        return None
+    pad = start & 15
+    # Drop alignment directives ahead of the first label; they would undo the padding.
+    head = re.sub(r"^\s*\.b?align\b.*\n", "", text[:label.start()], flags=re.M)
+    out = head + f"\t.balign 16\n\t.space {pad}\n" + text[label.start():]
+    dst = Path(dst_dir) / Path(src).name
+    if not dst.exists() or dst.read_text() != out:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(out)
+    return str(dst)
+
+
 def write_romxlate(path, version, gba_objs, aliases):
     """C table mapping GBA ROM addresses of global data symbols to their Vita
     addresses, for GbaPtr() to translate pointers stored in binary ROM data.
@@ -242,6 +273,12 @@ def main():
     gba_objs = [str(obj).replace(str(out_dir), gba_build, 1) for _src, obj, _flags in units]
     romxlate = out_dir / "romxlate.c"
     linked = write_romxlate(romxlate, version, gba_objs, [name for name, _ in symbols])
+    gba_addrs = {}
+    for line in subprocess.check_output(["arm-none-eabi-nm", f"build/{version}/com_{version}.elf"],
+                                        text=True).splitlines():
+        parts = line.split()
+        if len(parts) == 3:
+            gba_addrs[parts[2]] = int(parts[0], 16)
     linked_path = out_dir / "linked_symbols.txt"
     linked_path.write_text("\n".join(sorted(linked)) + "\n")
 
@@ -305,7 +342,8 @@ def main():
                 n.build(obj, "cc_game", str(src), order_only=gen_headers)
             else:
                 deps = [os.path.relpath(p) for p in generated[src.name][1]["binaries"]] if src.name in generated else []
-                n.build(obj, "as", str(src), implicit=deps)
+                aligned = align_blob_unit(src, out_dir / "aligned", version, gba_addrs)
+                n.build(obj, "as", aligned or str(src), implicit=deps)
             objs.append(obj)
         for src in port_game:
             obj = str(out_dir / "port" / (src.stem + ".o"))

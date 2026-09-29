@@ -16,6 +16,7 @@
  * still produces a crash dump. Each emulated code location is logged once.
  */
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/kernel/sysmem.h>
 
 #include <string.h>
 
@@ -44,6 +45,9 @@ typedef struct KuExceptionHandlerOpt {
 
 int kuKernelRegisterExceptionHandler(uint32_t type, KuExceptionHandler handler, KuExceptionHandler* old,
                                      KuExceptionHandlerOpt* opt);
+void kuKernelReleaseExceptionHandler(uint32_t type);
+int kuKernelMemProtect(void* addr, SceSize len, SceUInt32 prot);
+#define KU_PROT_READ 0x40
 
 #define REG_SP 13
 #define REG_LR 14
@@ -52,6 +56,20 @@ int kuKernelRegisterExceptionHandler(uint32_t type, KuExceptionHandler handler, 
 
 /* What the GBA reads from the BIOS region outside the BIOS (last opcode after a SWI returns). */
 #define BIOS_OPEN_BUS 0xE3A02004u
+
+/*
+ * Word reads through NULL return the address of this read-only zero page
+ * instead of the raw open-bus word. Like 0xE3A02004 it is a large, negative,
+ * non-zero number, so comparisons behave as on the GBA, but when the game uses
+ * it as a pointer (as it does with map cells outside the map) it reads zeros,
+ * and writes to it are dropped here, instead of landing in system memory.
+ */
+#define NULL_PAGE_SIZE 0x10000
+static uint8_t* sNullPage;
+
+static int InNullPage(uint32_t addr) {
+    return sNullPage != NULL && addr - (uint32_t)sNullPage < NULL_PAGE_SIZE;
+}
 
 static KuExceptionHandler sOldHandler;
 
@@ -81,13 +99,16 @@ static void NoteSite(uint32_t pc, uint32_t addr) {
 
 /* Addresses this handler takes care of; everything else is a real crash. */
 static int IsGbaAddress(uint32_t addr) {
-    return addr < 0x10000000;
+    return addr < 0x10000000 || InNullPage(addr);
 }
 
 static uint32_t Load(uint32_t addr, int size, int* ok) {
     uint8_t* p;
 
     *ok = 1;
+    if (addr < 0x02000000 && size == 4 && sNullPage != NULL) {
+        return (uint32_t)sNullPage;
+    }
     if (addr >= 0x10000000) {
         /* Host memory, e.g. the other words of an LDM that crossed into a valid page. */
         p = (uint8_t*)addr;
@@ -110,6 +131,9 @@ static uint32_t Load(uint32_t addr, int size, int* ok) {
 static void Store(uint32_t addr, int size, uint32_t value) {
     uint8_t* p;
 
+    if (InNullPage(addr)) {
+        return;
+    }
     if (addr >= 0x10000000) {
         p = (uint8_t*)addr;
     } else if (addr < 0x02000000 || (p = GbaPtrQuiet(addr)) == NULL) {
@@ -346,14 +370,37 @@ static void FaultHandler(KuExceptionContext* c) {
             return;
         }
     }
+    /*
+     * Not a GBA-style access: a real crash. Returning with an unchanged PC
+     * would re-run the faulting instruction forever, so chain to the previous
+     * handler, or, when there is none (kubridge reports NULL), unregister and
+     * let the instruction fault again into the system's crash handling, which
+     * writes the core dump.
+     */
+    PortLog("fault: unhandled data abort at pc=%08X addr=%08X (FaultInit=%p), crashing",
+            (unsigned)pc, (unsigned)c->far, (void*)FaultInit);
     if (sOldHandler != NULL) {
         sOldHandler(c);
+        return;
     }
+    kuKernelReleaseExceptionHandler(KU_EXCEPTION_DATA_ABORT);
 }
 
 void FaultInit(void) {
     KuExceptionHandlerOpt opt;
     int ret;
+    SceUID block;
+
+    block = sceKernelAllocMemBlock("khcom_nullpage", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, NULL_PAGE_SIZE, NULL);
+    if (block >= 0 && sceKernelGetMemBlockBase(block, (void**)&sNullPage) >= 0) {
+        memset(sNullPage, 0, NULL_PAGE_SIZE);
+        ret = kuKernelMemProtect(sNullPage, NULL_PAGE_SIZE, KU_PROT_READ);
+        if (ret < 0) {
+            PortLog("fault handler: null page stays writable (%08X)", ret);
+        }
+    } else {
+        sNullPage = NULL;
+    }
 
     memset(&opt, 0, sizeof(opt));
     opt.size = sizeof(opt);
