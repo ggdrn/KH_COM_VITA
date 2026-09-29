@@ -44,6 +44,7 @@ void InputInit(void);
 void InputPoll(void);
 
 void AudioInit(void);
+void PsgRender(int16_t* out, int samples, int rate);
 void AudioPump(void);
 
 #endif /* GUARD_VITA_HOST_H */

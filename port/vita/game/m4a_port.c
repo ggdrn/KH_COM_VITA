@@ -40,6 +40,19 @@ void SoundMain(void) {
     if (si->MPlayMainHead != NULL) {
         si->MPlayMainHead(si->musicPlayerHead);
     }
+    if (si->cgbChans != NULL) {
+        unsigned fresh = 0;
+        int i;
+
+        for (i = 0; i < 4; i++) {
+            u8 flags = si->cgbChans[i].statusFlags;
+
+            if ((flags & SOUND_CHANNEL_SF_START) && !(flags & SOUND_CHANNEL_SF_STOP)) {
+                fresh |= 1u << i;
+            }
+        }
+        PsgNewNotes(fresh);
+    }
     si->CgbSound();
 
     buf = si->pcmBuffer;

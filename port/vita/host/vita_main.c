@@ -35,8 +35,9 @@ PortConfig gPortConfig = {
 
 static SceUID sLogFd = -1;
 int gPortTraceFrames = 3;
-static int sSramDirty;
+static volatile int sSramDirty;
 static int sSramDirtyFrames;
+static SceUID sSramLock = -1;
 
 void PortLog(const char* fmt, ...) {
     char buf[512];
@@ -99,22 +100,66 @@ static void LoadSram(void) {
     }
 }
 
+/* Called from the game thread and from the power callback thread. */
 void PortFlushSram(void) {
     SceUID fd;
 
-    if (!sSramDirty) {
-        return;
+    if (sSramLock >= 0) {
+        sceKernelLockMutex(sSramLock, 1, NULL);
     }
-    fd = sceIoOpen(SAVE_PATH ".tmp", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-    if (fd < 0) {
-        PortLog("save: cannot open %s (%08X)", SAVE_PATH ".tmp", fd);
-        return;
+    if (sSramDirty) {
+        sSramDirty = 0;
+        fd = sceIoOpen(SAVE_PATH ".tmp", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+        if (fd < 0) {
+            PortLog("save: cannot open %s (%08X)", SAVE_PATH ".tmp", fd);
+            sSramDirty = 1;
+        } else {
+            sceIoWrite(fd, gGbaSram, sizeof(gGbaSram));
+            sceIoClose(fd);
+            sceIoRemove(SAVE_PATH);
+            sceIoRename(SAVE_PATH ".tmp", SAVE_PATH);
+        }
     }
-    sceIoWrite(fd, gGbaSram, sizeof(gGbaSram));
-    sceIoClose(fd);
-    sceIoRemove(SAVE_PATH);
-    sceIoRename(SAVE_PATH ".tmp", SAVE_PATH);
-    sSramDirty = 0;
+    if (sSramLock >= 0) {
+        sceKernelUnlockMutex(sSramLock, 1);
+    }
+}
+
+/* Write a pending save before the console suspends (standby, or the PS
+ * button then closing the app): the delayed flush may never get to run. */
+static int PowerCallback(int notifyId, int count, int powerInfo, void* common) {
+    (void)notifyId;
+    (void)count;
+    (void)common;
+    if (powerInfo & (SCE_POWER_CB_SYSTEM_SUSPEND | SCE_POWER_CB_APP_SUSPEND | SCE_POWER_CB_THERMAL_SUSPEND |
+                     SCE_POWER_CB_LOW_BATTERY_SUSPEND | SCE_POWER_CB_BUTTON_PS_PRESS |
+                     SCE_POWER_CB_BUTTON_POWER_PRESS)) {
+        PortLog("power: suspending (%08X), flushing save", powerInfo);
+        PortFlushSram();
+    }
+    return 0;
+}
+
+static int PowerThread(SceSize args, void* argp) {
+    SceUID cb = sceKernelCreateCallback("khcom_power", 0, PowerCallback, NULL);
+
+    (void)args;
+    (void)argp;
+    scePowerRegisterCallback(cb);
+    for (;;) {
+        sceKernelDelayThreadCB(1000000);
+    }
+    return 0;
+}
+
+static void PowerInit(void) {
+    SceUID thid;
+
+    sSramLock = sceKernelCreateMutex("khcom_sram", 0, 0, NULL);
+    thid = sceKernelCreateThread("khcom_power", PowerThread, 0x10000100, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_0, NULL);
+    if (thid >= 0) {
+        sceKernelStartThread(thid, 0, NULL);
+    }
 }
 
 void PortSramWritten(void) {
@@ -240,6 +285,7 @@ int main(void) {
     LoadConfig();
     FaultInit();
     LoadSram();
+    PowerInit();
     VideoInit();
     InputInit();
     AudioInit();

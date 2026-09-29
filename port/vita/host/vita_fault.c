@@ -63,8 +63,12 @@ int kuKernelMemProtect(void* addr, SceSize len, SceUInt32 prot);
  * non-zero number, so comparisons behave as on the GBA, but when the game uses
  * it as a pointer (as it does with map cells outside the map) it reads zeros,
  * and writes to it are dropped here, instead of landing in system memory.
+ * It starts at an address whose low half is 0x2004, the low half of the
+ * open-bus word, so code that keeps only the low bits of the value (tile or
+ * palette numbers, flags) sees what the GBA would give it.
  */
 #define NULL_PAGE_SIZE 0x10000
+#define NULL_PAGE_BLOCK_SIZE (2 * NULL_PAGE_SIZE)
 static uint8_t* sNullPage;
 
 static int InNullPage(uint32_t addr) {
@@ -391,10 +395,17 @@ void FaultInit(void) {
     int ret;
     SceUID block;
 
-    block = sceKernelAllocMemBlock("khcom_nullpage", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, NULL_PAGE_SIZE, NULL);
+    block = sceKernelAllocMemBlock("khcom_nullpage", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, NULL_PAGE_BLOCK_SIZE, NULL);
     if (block >= 0 && sceKernelGetMemBlockBase(block, (void**)&sNullPage) >= 0) {
-        memset(sNullPage, 0, NULL_PAGE_SIZE);
-        ret = kuKernelMemProtect(sNullPage, NULL_PAGE_SIZE, KU_PROT_READ);
+        uint8_t* blockBase = sNullPage;
+        uint32_t page = ((uint32_t)blockBase & ~0xFFFFu) | (BIOS_OPEN_BUS & 0xFFFF);
+
+        if (page < (uint32_t)blockBase) {
+            page += 0x10000;
+        }
+        memset(blockBase, 0, NULL_PAGE_BLOCK_SIZE);
+        sNullPage = (uint8_t*)page;
+        ret = kuKernelMemProtect(blockBase, NULL_PAGE_BLOCK_SIZE, KU_PROT_READ);
         if (ret < 0) {
             PortLog("fault handler: null page stays writable (%08X)", ret);
         }

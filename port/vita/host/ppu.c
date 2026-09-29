@@ -51,6 +51,7 @@ typedef struct PpuCtx {
     const PpuObj* objs;
     int objCount;
     const PpuBgStream* streams;
+    int clipObjs;
     int32_t affX[2], affY[2];
     uint32_t latchX[2], latchY[2];
     uint16_t bgLine[4][MAX_W];
@@ -166,6 +167,33 @@ static void RenderTextBgMosaic(PpuCtx* c, int bg, int y) {
 
 static void RenderStreamMargin(PpuCtx* c, int bg, int y, int x0, int x1);
 
+/*
+ * Widescreen margins of a text background. A streamed map continues there;
+ * a 512-pixel-wide tilemap (battle backgrounds) holds real content past the
+ * original screen and is left as drawn; anything else is a 256-pixel map whose
+ * columns past 240 are unused or wrap around (UI panels, frames), so the
+ * margins stay transparent and show the layers below.
+ */
+static void RenderTextMargins(PpuCtx* c, int bg, int y, int size) {
+    uint16_t* line = c->bgLine[bg];
+    int x;
+
+    if (c->xoff <= 0) {
+        return;
+    }
+    if (c->streams[bg].valid) {
+        RenderStreamMargin(c, bg, y, 0, c->xoff);
+        RenderStreamMargin(c, bg, y, c->xoff + GBA_SCREEN_WIDTH, c->width);
+    } else if (!(size & 1)) {
+        for (x = 0; x < c->xoff; x++) {
+            line[x] = TRANSPARENT;
+        }
+        for (x = c->xoff + GBA_SCREEN_WIDTH; x < c->width; x++) {
+            line[x] = TRANSPARENT;
+        }
+    }
+}
+
 static void RenderTextBg(PpuCtx* c, int bg, int y) {
     uint16_t cnt = IO16(c, 0x08 + bg * 2);
     int hofs = IO16(c, 0x10 + bg * 4) & 0x1FF;
@@ -183,6 +211,7 @@ static void RenderTextBg(PpuCtx* c, int bg, int y) {
 
     if (cnt & 0x40) {
         RenderTextBgMosaic(c, bg, y);
+        RenderTextMargins(c, bg, y, size);
         return;
     }
     ty = (y + vofs) & hMask;
@@ -243,10 +272,7 @@ static void RenderTextBg(PpuCtx* c, int bg, int y) {
         tx = (tx + n) & wMask;
     }
 
-    if (c->xoff > 0 && c->streams[bg].valid) {
-        RenderStreamMargin(c, bg, y, 0, c->xoff);
-        RenderStreamMargin(c, bg, y, c->xoff + GBA_SCREEN_WIDTH, c->width);
-    }
+    RenderTextMargins(c, bg, y, size);
 }
 
 /*
@@ -452,6 +478,9 @@ static int RenderObjs(PpuCtx* c, int y) {
     int mh = ((mos >> 8) & 0xF) + 1;
     int mv = ((mos >> 12) & 0xF) + 1;
     int anySemi = 0;
+    /* Columns sprites may cover: all, or the original 240 under a UI overlay. */
+    int lo = c->clipObjs ? c->xoff : 0;
+    int hi = c->clipObjs ? c->xoff + GBA_SCREEN_WIDTH : c->width;
     int i;
 
     for (i = 0; i < c->width; i++) {
@@ -474,7 +503,7 @@ static int RenderObjs(PpuCtx* c, int y) {
         }
         x0 = o->x + c->xoff;
         x1 = x0 + o->bw;
-        if (x1 <= 0 || x0 >= c->width) {
+        if (x1 <= lo || x0 >= hi) {
             continue;
         }
         if (o->mode == 1) {
@@ -483,8 +512,8 @@ static int RenderObjs(PpuCtx* c, int y) {
         if (!o->affine && !o->mosaic) {
             /* Regular sprite: one tile row fetch per 8 pixels. */
             int ty = o->vflip ? o->h - 1 - line : line;
-            int start = x0 < 0 ? 0 : x0;
-            int end = x1 < c->width ? x1 : c->width;
+            int start = x0 < lo ? lo : x0;
+            int end = x1 < hi ? x1 : hi;
             uint16_t pal = o->palBase;
             uint8_t semi = o->mode == 1;
 
@@ -547,7 +576,7 @@ static int RenderObjs(PpuCtx* c, int y) {
             }
             continue;
         }
-        for (x = x0 < 0 ? 0 : x0; x < x1 && x < c->width; x++) {
+        for (x = x0 < lo ? lo : x0; x < x1 && x < hi; x++) {
             int lx = x - x0;
             int tx, ty;
             uint8_t ci;
@@ -893,6 +922,7 @@ void PpuRenderSlice(const PpuFrame* frame, int slice, int y0, int y1) {
     c->objs = sObjs;
     c->objCount = sObjCount;
     c->streams = frame->streams;
+    c->clipObjs = frame->clipObjs;
 
     /* Bring the affine reference points to line y0 without drawing. */
     for (y = 0; y < y0; y++) {

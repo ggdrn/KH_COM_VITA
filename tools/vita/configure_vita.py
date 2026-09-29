@@ -40,8 +40,6 @@ REPLACED_UNITS = {
     "m4a_1.s",
     "transform_veneers.s",
 }
-# Generated tables that store pointer-carrying structs as byte arrays.
-RELOCATED_GEN_C = {"event_backgrounds.c", "map_rooms.c"}
 # ARM code that runs unchanged on the Vita's Cortex-A9.
 NATIVE_ARM_UNITS = {"transform.s"}
 
@@ -275,15 +273,13 @@ def main():
     units = materialize_assets(regional_plan, units, version, gba_build)
     gba_objs = [str(obj).replace(str(out_dir), gba_build, 1) for _src, obj, _flags in units]
     romxlate = out_dir / "romxlate.c"
-    linked = write_romxlate(romxlate, version, gba_objs, [name for name, _ in symbols])
+    write_romxlate(romxlate, version, gba_objs, [name for name, _ in symbols])
     gba_addrs = {}
     for line in subprocess.check_output(["arm-none-eabi-nm", f"build/{version}/com_{version}.elf"],
                                         text=True).splitlines():
         parts = line.split()
         if len(parts) == 3:
             gba_addrs[parts[2]] = int(parts[0], 16)
-    linked_path = out_dir / "linked_symbols.txt"
-    linked_path.write_text("\n".join(sorted(linked)) + "\n")
 
     port_game = sorted(Path("port/vita/game").glob("*.c"))
     port_host = sorted(Path("port/vita/host").glob("*.c"))
@@ -343,16 +339,9 @@ def main():
                                 for p in [pool.header(version)] + pool.fragment_paths(version)])
 
         objs = []
-        n.rule("relocate", f"python3 tools/vita/relocate_gen_c.py $in $out build/{version}/com_{version}.elf "
-               f"{linked_path}", description="RELOC $out")
         for src, obj, _flags in units:
             src = Path(src)
-            if src.suffix == ".c" and src.name in RELOCATED_GEN_C:
-                # Byte-array tables that embed GBA pointers (see relocate_gen_c.py).
-                fixed = str(out_dir / "reloc" / src.name)
-                n.build(fixed, "relocate", str(src), implicit=["tools/vita/relocate_gen_c.py", str(linked_path)])
-                n.build(obj, "cc_game", fixed, order_only=gen_headers)
-            elif src.suffix == ".c":
+            if src.suffix == ".c":
                 n.build(obj, "cc_game", str(src), order_only=gen_headers)
             else:
                 deps = [os.path.relpath(p) for p in generated[src.name][1]["binaries"]] if src.name in generated else []

@@ -20,9 +20,9 @@ Early and experimental (see `port/vita/VERSION`).
 | Boot, title screen, new game, story events, field | Working |
 | Frame rate | Stable 60 fps on hardware (rendering takes ~3–6 ms per frame, split over two cores) |
 | Battles | The first battle and its tutorial complete; later areas are being tested |
-| Opening/ending movies (FMV) | Skipped (their decoder is GBA machine code that hasn't been ported yet) |
-| Music and sound effects | DirectSound channels working; the GBA's PSG ("Game Boy") channels are silent |
-| Saving | Working (`ux0:data/khcom/khcom.sav`) |
+| Opening/ending movies (FMV) | Playing (the game's ARM decoder runs natively); Start skips a movie |
+| Music and sound effects | Working: DirectSound channels and the GBA's four PSG ("Game Boy") channels |
+| Saving | Working (`ux0:data/khcom/khcom.sav`), also written when the Vita suspends |
 
 ## Features
 

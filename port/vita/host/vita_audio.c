@@ -24,7 +24,12 @@ static volatile int sSrcRate = 15768;
 static int sPort = -1;
 static SceUID sThread = -1;
 
+static int16_t Clamp16(int v) {
+    return v > 32767 ? 32767 : v < -32768 ? -32768 : v;
+}
+
 void PortAudioPush(const int8_t* right, const int8_t* left, int samples, int rate) {
+    static int16_t psg[RING_SIZE / 4 * 2];
     uint32_t w = sWritePos;
     int i;
 
@@ -34,14 +39,19 @@ void PortAudioPush(const int8_t* right, const int8_t* left, int samples, int rat
     if (rate > 0) {
         sSrcRate = rate;
     }
+    if (samples > RING_SIZE / 4) {
+        samples = RING_SIZE / 4;
+    }
+    /* The PSG channels advance even when the frame is dropped below. */
+    PsgRender(psg, samples, sSrcRate);
     /* Drop the frame instead of overwriting unread audio. */
     if ((uint32_t)(w - sReadPos) + samples >= RING_SIZE) {
         return;
     }
     for (i = 0; i < samples; i++, w++) {
         uint32_t idx = (w & (RING_SIZE - 1)) * 2;
-        sRing[idx] = left[i] * 256;
-        sRing[idx + 1] = right[i] * 256;
+        sRing[idx] = Clamp16(left[i] * 256 + psg[i * 2]);
+        sRing[idx + 1] = Clamp16(right[i] * 256 + psg[i * 2 + 1]);
     }
     sWritePos = w;
 }

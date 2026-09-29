@@ -30,11 +30,23 @@ void AgbMain(void);
 
 /* One VBlank of 8-bit PCM from the m4a mixer (right = FIFO A, left = FIFO B). */
 void PortAudioPush(const int8_t* right, const int8_t* left, int samples, int rate);
+/* Bit n: PSG channel n+1 starts a new note in this sound frame. */
+void PsgNewNotes(unsigned mask);
+/* Executable memory for the FMV codecs (vita_codemem.c); write between
+ * PortCodeBeginWrite() and PortCodeEndWrite(). */
+void* PortCodeAlloc(uint32_t size);
+void PortCodeFree(void* p);
+void PortCodeBeginWrite(void);
+void PortCodeEndWrite(void);
 /* Streamed background map of one BG for the widescreen margins (see
  * port/vita/game/widescreen.c); map == NULL disables it. */
 void PortSetBgStream(int bg, const void* const* map, int width, int height, int worldX, int worldY,
                      int shadowHofs, int shadowVofs);
 void PortCaptureBgStreams(void);
+/* A 240-pixel UI screen drawn over the scene is open (+1) or closed (-1):
+ * while any is open, sprites stay inside the original 240 columns, as the
+ * UI moves things out of view by placing them off the GBA screen. */
+void PortUiOverlay(int delta);
 /* GBA bus address -> host memory, or NULL (used by the fault handler). */
 void* GbaPtrQuiet(uint32_t addr);
 /* Frame capture for the render thread (see vita_render.c). */

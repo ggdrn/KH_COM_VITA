@@ -123,6 +123,15 @@ void PortSetBgStream(int bg, const void* const* map, int width, int height, int 
     s->valid = 1;
 }
 
+static int sUiOverlays;
+
+void PortUiOverlay(int delta) {
+    sUiOverlays += delta;
+    if (sUiOverlays < 0) {
+        sUiOverlays = 0;
+    }
+}
+
 /* Game thread: called for each visible line, before its HBlank. */
 void PortCaptureLine(int y) {
     memcpy(sFrames[sCapture].io[y], gGbaIo, PPU_LINE_IO_SIZE);
@@ -134,6 +143,7 @@ void PortCaptureSubmit(void) {
     SceUInt64 t0;
 
     memcpy(f->streams, sStreams, sizeof(f->streams));
+    f->clipObjs = sUiOverlays > 0;
     memcpy(f->pltt, gGbaPltt, sizeof(f->pltt));
     memcpy(f->oam, gGbaOam, sizeof(f->oam));
     memcpy(f->vram, gGbaVram, sizeof(f->vram));
