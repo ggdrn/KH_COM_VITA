@@ -44,6 +44,8 @@ void InputInit(void);
 void InputPoll(void);
 
 void AudioInit(void);
+/* Fills the executable's ROM data from the player's ROM (vita_rom.c). */
+void RomLoad(void);
 void PsgRender(int16_t* out, int samples, int rate);
 void AudioPump(void);
 

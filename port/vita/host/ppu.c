@@ -52,7 +52,6 @@ typedef struct PpuCtx {
     int objCount;
     const PpuBgStream* streams;
     int clipObjs;
-    int stretchMask;
     int32_t affX[2], affY[2];
     uint32_t latchX[2], latchY[2];
     uint16_t bgLine[4][MAX_W];
@@ -175,64 +174,11 @@ static void RenderStreamMargin(PpuCtx* c, int bg, int y, int x0, int x1);
  * columns past 240 are unused or wrap around (UI panels, frames), so the
  * margins stay transparent and show the layers below.
  */
-/*
- * Dialogue boxes span the 240 original columns. For a row where this BG's
- * content starts near the left edge and ends near the right one (a box row),
- * move its left and right border pixels to the screen edges and fill the
- * margins between with the pixel just inside each border, so the box spans
- * the whole widescreen frame. Other rows are left as they are.
- */
-#define BOX_BORDER 8
-#define BOX_EDGE_SLACK 16
-
-static void StretchBoxEdges(PpuCtx* c, uint16_t* line) {
-    int lo = c->xoff, hi = c->xoff + GBA_SCREEN_WIDTH - 1;
-    int l = lo, r = hi, x;
-    uint16_t left[BOX_BORDER], right[BOX_BORDER], fillL, fillR;
-
-    while (l <= hi && line[l] == TRANSPARENT) {
-        l++;
-    }
-    while (r >= lo && line[r] == TRANSPARENT) {
-        r--;
-    }
-    if (l > lo + BOX_EDGE_SLACK || r < hi - BOX_EDGE_SLACK || r - l < 4 * BOX_BORDER) {
-        return;
-    }
-    for (x = 0; x < BOX_BORDER; x++) {
-        left[x] = line[l + x];
-        right[x] = line[r - BOX_BORDER + 1 + x];
-    }
-    fillL = line[l + BOX_BORDER];
-    fillR = line[r - BOX_BORDER];
-    for (x = 0; x < BOX_BORDER; x++) {
-        line[x] = left[x];
-        line[c->width - BOX_BORDER + x] = right[x];
-    }
-    for (x = BOX_BORDER; x < l + BOX_BORDER; x++) {
-        line[x] = fillL;
-    }
-    for (x = r - BOX_BORDER + 1; x < c->width - BOX_BORDER; x++) {
-        line[x] = fillR;
-    }
-}
-
 static void RenderTextMargins(PpuCtx* c, int bg, int y, int size) {
     uint16_t* line = c->bgLine[bg];
     int x;
 
     if (c->xoff <= 0) {
-        return;
-    }
-    if (c->stretchMask & (1 << bg)) {
-        /* The box's own map around it is not shown in the margins. */
-        for (x = 0; x < c->xoff; x++) {
-            line[x] = TRANSPARENT;
-        }
-        for (x = c->xoff + GBA_SCREEN_WIDTH; x < c->width; x++) {
-            line[x] = TRANSPARENT;
-        }
-        StretchBoxEdges(c, line);
         return;
     }
     if (c->streams[bg].valid) {
@@ -977,7 +923,6 @@ void PpuRenderSlice(const PpuFrame* frame, int slice, int y0, int y1) {
     c->objCount = sObjCount;
     c->streams = frame->streams;
     c->clipObjs = frame->clipObjs;
-    c->stretchMask = frame->stretchMask;
 
     /* Bring the affine reference points to line y0 without drawing. */
     for (y = 0; y < y0; y++) {

@@ -43,6 +43,12 @@ REPLACED_UNITS = {
 # ARM code that runs unchanged on the Vita's Cortex-A9.
 NATIVE_ARM_UNITS = {"transform.s"}
 
+# ROM data units are moved to writable sections of their own (keeping the
+# GBA's split between .text, .rodata and .data blobs), so their contents can
+# be filled in from the user's ROM at startup (tools/vita/strip_rom_data.py,
+# port/vita/host/vita_rom.c).
+ROM_SECTIONS = {".text": ".romtext", ".rodata": ".romrodata", ".data": ".romdata"}
+
 HW_REGIONS = [
     (0x05000000, 0x400, "gGbaPltt"),
     (0x06000000, 0x18000, "gGbaVram"),
@@ -144,30 +150,23 @@ def write_romsyms(path, version, symbols):
     path.write_text("\n".join(lines) + "\n")
 
 
-def align_blob_unit(src, dst_dir, version, gba_addrs=None):
-    """Copy of an address-bounded ROM data unit that starts at the same
-    address modulo 16 as on the GBA.
+def align_blob_unit(src, dst_dir, anchors):
+    """Copy of a ROM data unit whose sections start at the same address modulo
+    16 as on the GBA.
 
-    Several blobs start at odd GBA addresses (e.g. map_room_tables.s at
-    0x0984C3CF) while tables inside them are word aligned and read with
-    LDM/LDRD, which fault on unaligned addresses on the Vita. Returns the
-    path to assemble, or None when the unit needs no change."""
-    text = Path(src).read_text()
-    m = re.search(r'\.incbin\s+"assets/' + version + r'/([0-9A-F]{8})-[0-9A-F]{8}\.bin"', text)
-    label = re.search(r"^(\w+):", text, re.M)
-    if not label:
+    Tables inside the units are word aligned and read with LDM/LDRD, which
+    fault on unaligned addresses on the Vita, and some blobs start at odd GBA
+    addresses (e.g. map_room_tables at 0x0984C3CF). `anchors` maps each GBA
+    section of the unit that needs it to its GBA start address; a prelude pads
+    each one, then switches back to .text, the assembler's default, so the
+    unit's own directives work unchanged. Returns the path to assemble, or
+    None when the unit needs no change."""
+    if not anchors:
         return None
-    if m:
-        start = int(m[1], 16)
-    elif gba_addrs and label[1] in gba_addrs:
-        # Generated asset units: the first label's address in the GBA build.
-        start = gba_addrs[label[1]]
-    else:
-        return None
-    pad = start & 15
-    # Drop alignment directives ahead of the first label; they would undo the padding.
-    head = re.sub(r"^\s*\.b?align\b.*\n", "", text[:label.start()], flags=re.M)
-    out = head + f"\t.balign 16\n\t.space {pad}\n" + text[label.start():]
+    prelude = ""
+    for sec, start in sorted(anchors.items()):
+        prelude += f"\t.section {sec}\n\t.balign 16\n\t.space {start & 15}\n"
+    out = prelude + "\t.text\n" + Path(src).read_text()
     dst = Path(dst_dir) / Path(src).name
     if not dst.exists() or dst.read_text() != out:
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -186,23 +185,25 @@ def gba_sections(version):
     return out
 
 
-def contiguous_data_units(units, version, gba_build, out_dir):
-    """Data units that directly follow another data unit in the GBA ROM.
+def unit_anchors(units, version, gba_build, out_dir):
+    """{Vita object: {GBA section: GBA start}} for the data unit sections that
+    need an alignment anchor.
 
-    Code sometimes reaches past the end of one table into the next unit (a
-    palette at gUnk_099910C4 + 0x240 lives in the following unit), so those
-    must stay back to back on the Vita too: they keep their own alignment and
-    are not re-anchored by align_blob_unit, which would open a gap."""
+    A section that directly follows another data unit's in the GBA ROM needs
+    none: code sometimes reaches past the end of one table into the next unit
+    (a palette at gUnk_099910C4 + 0x240 lives in the following unit), so those
+    stay back to back on the Vita too, and inherit the previous unit's
+    alignment."""
     sections = gba_sections(version)
     last = {}  # section -> (end address, is a data unit)
-    out = set()
+    out = {}
     for src, obj, _flags in units:
         gba_obj = str(obj).replace(str(out_dir), gba_build, 1)
         is_data = Path(src).suffix != ".c"
         for sec, (start, size) in sorted(sections.get(gba_obj, {}).items(), key=lambda kv: kv[1][0]):
             prev = last.get(sec)
-            if is_data and prev is not None and prev[1] and prev[0] == start:
-                out.add(str(obj))
+            if is_data and sec in (".text", ".rodata", ".data") and not (prev and prev[1] and prev[0] == start):
+                out.setdefault(str(obj), {})[sec] = start
             last[sec] = (start + size, is_data)
     return out
 
@@ -306,12 +307,6 @@ def main():
     gba_objs = [str(obj).replace(str(out_dir), gba_build, 1) for _src, obj, _flags in units]
     romxlate = out_dir / "romxlate.c"
     write_romxlate(romxlate, version, gba_objs, [name for name, _ in symbols])
-    gba_addrs = {}
-    for line in subprocess.check_output(["arm-none-eabi-nm", f"build/{version}/com_{version}.elf"],
-                                        text=True).splitlines():
-        parts = line.split()
-        if len(parts) == 3:
-            gba_addrs[parts[2]] = int(parts[0], 16)
 
     port_game = sorted(Path("port/vita/game").glob("*.c"))
     port_host = sorted(Path("port/vita/host").glob("*.c"))
@@ -334,17 +329,28 @@ def main():
         n.newline()
         n.rule("cc_game", "$cc $game_cflags -MMD -MF $out.d -c $in -o $out", depfile="$out.d", deps="gcc",
                description="CC $out")
+        # Decomp C: constant tables go to a writable section, so the ones equal
+        # to the ROM can be filled in from it at startup as well.
+        n.rule("cc_game_rom", "$cc $game_cflags -MMD -MF $out.d -c $in -o $out && "
+               "$sdkbin/arm-vita-eabi-objcopy --rename-section .rodata=.gamerodata,alloc,load,contents,data $out",
+               depfile="$out.d", deps="gcc", description="CC $out")
         n.rule("cc_port", "$cc $port_cflags -MMD -MF $out.d -c $in -o $out", depfile="$out.d", deps="gcc",
                description="CC $out")
         n.rule("as", "$as $asflags -o $out $in", description="AS $out")
+        rename = " ".join(f"--rename-section {a}={b},alloc,load,contents,data" for a, b in ROM_SECTIONS.items())
+        n.rule("as_rom", f"$as $asflags -o $out $in && $sdkbin/arm-vita-eabi-objcopy {rename} $out",
+               description="AS $out")
         n.rule("assetgen", "python3 tools/assetgen.py $version $manifest", description="ASSETGEN $manifest",
                restat=True)
         n.rule("textgen", "python3 tools/textgen.py $version $manifest", description="TEXTGEN $manifest",
                restat=True)
-        n.rule("link", "$cc -Wl,-q -Wl,--no-warn-rwx-segments -o $out @$out.rsp $libs"
+        n.rule("link", "$cc -Wl,-q -Wl,--no-warn-rwx-segments -Wl,-Map=$out.map -o $out @$out.rsp $libs"
                " && python3 tools/vita/fix_abs_symbols.py $out",
                rspfile="$out.rsp", rspfile_content="$in", description="LINK $out")
         n.rule("velf", "$sdkbin/vita-elf-create $in $out", description="VELF $out")
+        n.rule("strip_rom", f"python3 tools/vita/strip_rom_data.py $in $in.map build/{version}/com_{version}.map "
+               f"roms/{VERSIONS[version]}.gba $out $rommap gGbaIo build/{version}/com_{version}.elf",
+               description="STRIP ROM DATA $out")
         n.rule("eboot", "$sdkbin/vita-make-fself -s -c $in $out", description="FSELF $out")
         n.rule("sfo", '$sdkbin/vita-mksfoex -s TITLE_ID=$titleid -s APP_VER=$appver -d ATTRIBUTE2=12 "$title" $out',
                description="SFO $out")
@@ -371,15 +377,16 @@ def main():
                                 for p in [pool.header(version)] + pool.fragment_paths(version)])
 
         objs = []
-        contiguous = contiguous_data_units(units, version, gba_build, out_dir)
+        anchors = unit_anchors(units, version, gba_build, out_dir)
         for src, obj, _flags in units:
             src = Path(src)
             if src.suffix == ".c":
-                n.build(obj, "cc_game", str(src), order_only=gen_headers)
+                n.build(obj, "cc_game_rom", str(src), order_only=gen_headers)
             else:
                 deps = [os.path.relpath(p) for p in generated[src.name][1]["binaries"]] if src.name in generated else []
-                aligned = None if str(obj) in contiguous else align_blob_unit(src, out_dir / "aligned", version, gba_addrs)
-                n.build(obj, "as", aligned or str(src), implicit=deps)
+                aligned = align_blob_unit(src, out_dir / "aligned", anchors.get(str(obj)))
+                rule = "as" if src.name in NATIVE_ARM_UNITS else "as_rom"
+                n.build(obj, rule, aligned or str(src), implicit=deps)
             objs.append(obj)
         for src in port_game:
             obj = str(out_dir / "port" / (src.stem + ".o"))
@@ -412,7 +419,17 @@ def main():
         # Relink when vitaGL is rebuilt (e.g. with or without its splash screen).
         n.build(elf, "link", objs, implicit=[str(Path(args.vitasdk) / "arm-vita-eabi/lib/libvitaGL.a")],
                 variables={"libs": " ".join(libs)})
-        n.build(velf, "velf", elf)
+        # The ROM's data leaves the executable; the player's ROM supplies it at startup.
+        stripped = str(out_dir / "khcom.stripped.elf")
+        rommap = str(out_dir / "rommap.bin")
+        n.build(stripped, "strip_rom", elf, implicit=["tools/vita/strip_rom_data.py", f"build/{version}/com_{version}.map",
+                                                      f"roms/{VERSIONS[version]}.gba"],
+                implicit_outputs=[rommap], variables={"rommap": rommap})
+        n.rule("audit_rom", f"python3 tools/vita/audit_rom_free.py $in roms/{VERSIONS[version]}.gba $out",
+               description="AUDIT $in")
+        audit = str(out_dir / "rom_audit.txt")
+        n.build(audit, "audit_rom", stripped, implicit=["tools/vita/audit_rom_free.py"])
+        n.build(velf, "velf", stripped, order_only=[audit])
         n.build(eboot, "eboot", velf)
         # APP_VER only holds XX.YY, so it carries the last two version fields.
         n.build(sfo, "sfo", implicit=["tools/vita/configure_vita.py", "port/vita/VERSION"],
@@ -427,7 +444,8 @@ def main():
         n.build(sce_out, "livearea", implicit=[str(p) for p in sce_src] + ["tools/vita/livearea.py"],
                 variables={"outdir": str(out_dir / "sce_sys")})
         extra = [f"-a {o}={p.relative_to('port/vita')}" for p, o in zip(sce_src, sce_out)]
-        n.build(vpk, "vpk", [eboot, sfo], implicit=sce_out,
+        extra.append(f"-a {rommap}=rommap.bin")
+        n.build(vpk, "vpk", [eboot, sfo], implicit=sce_out + [rommap],
                 variables={"sfo": sfo, "eboot": eboot, "extra": " ".join(extra)})
         n.build("vpk", "phony", vpk)
         # Re-run this script when the version or the script itself changes.

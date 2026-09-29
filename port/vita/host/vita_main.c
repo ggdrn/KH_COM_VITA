@@ -287,6 +287,7 @@ int main(void) {
     LoadSram();
     PowerInit();
     VideoInit();
+    RomLoad();
     InputInit();
     AudioInit();
 
