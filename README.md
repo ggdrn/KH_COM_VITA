@@ -158,3 +158,9 @@ Kingdom Hearts is © Disney and Square Enix. This project is not affiliated with
 or decompiled game code is included in this repository. The decompilation it builds on is a separate project
 ([Pheenoh/khcom](https://github.com/Pheenoh/khcom), CC0), fetched by `scripts/setup.sh`. You must own the game
 and dump your own copy to build this port.
+
+## License
+
+The code in this repository (the Vita platform layer, the build tools and the patch) is released under the
+[MIT License](LICENSE). It does not cover the game, its data, or the decompilation, which keeps its own CC0
+license.
