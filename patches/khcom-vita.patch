@@ -613,18 +613,19 @@ index 50853dbe8..6079f6ae9 100644
  
      if (p->unk_0E8 == 3) {
 diff --git a/src/btl/btl2.c b/src/btl/btl2.c
-index 7e1efbdef..2ebf07419 100644
+index 7e1efbdef..ff93ba964 100644
 --- a/src/btl/btl2.c
 +++ b/src/btl/btl2.c
-@@ -1,3 +1,7 @@
+@@ -1,3 +1,8 @@
 +#ifdef PLATFORM_VITA
 +#include <string.h>
 +#include "port.h"
++#include "field_state.h"
 +#endif
  #include "task_descriptors.h"
  #include "battle_localized_data.h"
  #include "system_state.h"
-@@ -407,23 +411,31 @@ s32 task_btl_hpply_1(BtlHpplyWork* work) {
+@@ -407,23 +412,39 @@ s32 task_btl_hpply_1(BtlHpplyWork* work) {
      return 1;
  }
  
@@ -632,8 +633,16 @@ index 7e1efbdef..2ebf07419 100644
 +/* The portrait reaches above the top of the screen at y = 2; the Vita port
 + * moves the player's HP display down so it is not cut off. */
 +#define HUD_Y(y) ((y) + 6)
++/* Sprite priority (BG layering) and draw order of the HP display; the field
++ * HP display sends it behind open menus (PortFieldHudDraw). */
++static u16 sHudAttr = 0x410;
++static u16 sHudOrderBias;
++#define HUD_ATTR sHudAttr
++#define HUD_ORDER(n) ((n) + sHudOrderBias)
 +#else
 +#define HUD_Y(y) (y)
++#define HUD_ATTR 0x410
++#define HUD_ORDER(n) (n)
 +#endif
 +
  void task_btl_hpply_2(BtlHpplyWork* work) {
@@ -641,40 +650,40 @@ index 7e1efbdef..2ebf07419 100644
      ObjAffine* aff;
  
 -    DrawSprite(4, 2, work->gfx, work->tiles, work->palette, 0, 0x410, 1);
-+    DrawSprite(4, HUD_Y(2), work->gfx, work->tiles, work->palette, 0, 0x410, 1);
++    DrawSprite(4, HUD_Y(2), work->gfx, work->tiles, work->palette, 0, HUD_ATTR, HUD_ORDER(1));
  
      switch (work->unk_68) {
      case 0:
 -        DrawSprite(4, 2, work->gfx2, work->tiles2, work->palette2, 0, 0x410, 4);
-+        DrawSprite(4, HUD_Y(2), work->gfx2, work->tiles2, work->palette2, 0, 0x410, 4);
++        DrawSprite(4, HUD_Y(2), work->gfx2, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
          break;
      case 1:
 -        DrawSprite(4, 2, gBHpgagFrame27, work->tiles2, work->palette2, 0, 0x410, 4);
 -        DrawSprite(4, 2, work->gfx3, work->tiles3, work->palette2, 0, 0x410, 3);
-+        DrawSprite(4, HUD_Y(2), gBHpgagFrame27, work->tiles2, work->palette2, 0, 0x410, 4);
-+        DrawSprite(4, HUD_Y(2), work->gfx3, work->tiles3, work->palette2, 0, 0x410, 3);
++        DrawSprite(4, HUD_Y(2), gBHpgagFrame27, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
++        DrawSprite(4, HUD_Y(2), work->gfx3, work->tiles3, work->palette2, 0, HUD_ATTR, HUD_ORDER(3));
          break;
      case 2:
 -        DrawSprite(4, 2, work->gfx2, work->tiles2, work->palette2, 0, 0x410, 4);
 -        DrawSprite(4, 2, work->gfx3, work->tiles3, work->palette2, 0, 0x410, 5);
-+        DrawSprite(4, HUD_Y(2), work->gfx2, work->tiles2, work->palette2, 0, 0x410, 4);
-+        DrawSprite(4, HUD_Y(2), work->gfx3, work->tiles3, work->palette2, 0, 0x410, 5);
++        DrawSprite(4, HUD_Y(2), work->gfx2, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
++        DrawSprite(4, HUD_Y(2), work->gfx3, work->tiles3, work->palette2, 0, HUD_ATTR, HUD_ORDER(5));
          break;
      }
  
-@@ -502,9 +514,9 @@ void task_btl_hpply_2(BtlHpplyWork* work) {
+@@ -502,9 +523,9 @@ void task_btl_hpply_2(BtlHpplyWork* work) {
          }
  
          if (work->unk_68 == 1) {
 -            DrawSprite(31, 9, gBHpgagFrame26, work->tiles4, work->palette2, aff, 0x410, 2);
-+            DrawSprite(31, HUD_Y(9), gBHpgagFrame26, work->tiles4, work->palette2, aff, 0x410, 2);
++            DrawSprite(31, HUD_Y(9), gBHpgagFrame26, work->tiles4, work->palette2, aff, HUD_ATTR, HUD_ORDER(2));
          } else {
 -            DrawSprite(31, 6, gBHpgagFrame0, work->tiles4, work->palette2, aff, 0x410, 2);
-+            DrawSprite(31, HUD_Y(6), gBHpgagFrame0, work->tiles4, work->palette2, aff, 0x410, 2);
++            DrawSprite(31, HUD_Y(6), gBHpgagFrame0, work->tiles4, work->palette2, aff, HUD_ATTR, HUD_ORDER(2));
          }
      }
  }
-@@ -2023,3 +2035,174 @@ TaskDesc gTaskDescBtlStart = {
+@@ -2023,3 +2044,182 @@ TaskDesc gTaskDescBtlStart = {
      NULL,
      sizeof(BtlStartWork),
  };
@@ -835,7 +844,15 @@ index 7e1efbdef..2ebf07419 100644
 +    }
 +    w->gfx = AnimUpdate(&w->anim);
 +    w->gfx2 = AnimUpdate(&w->anim2);
++    if (gFieldState != 0 && (gFieldState->flags & 0x1000)) {
++        /* A menu is open over the field (pause, save): the HP display goes
++         * behind it, under every background layer and sprite in front. */
++        sHudAttr = 0xC10;
++        sHudOrderBias = 0xFF00;
++    }
 +    task_btl_hpply_2(w);
++    sHudAttr = 0x410;
++    sHudOrderBias = 0;
 +}
 +
 +void PortFieldHudClose(void) {
@@ -1493,7 +1510,7 @@ index db30063e4..ace104a71 100644
          break;
      case 4:
 diff --git a/src/engine.c b/src/engine.c
-index 0d94efd80..84cd4c9fc 100644
+index 0d94efd80..a7a6f4f58 100644
 --- a/src/engine.c
 +++ b/src/engine.c
 @@ -1,3 +1,4 @@
@@ -1589,7 +1606,21 @@ index 0d94efd80..84cd4c9fc 100644
      count = gSpriteWork->entryCount;
      entries = gSpriteWork->sortPtrs;
      mosaic = gSpriteWork->unk_2BAF;
-@@ -859,6 +860,16 @@ u8 IsRectOutsideScreen(s16 x, s16 y, s32 a, s32 b, s32 c, s32 d) {
+@@ -768,7 +769,13 @@ void func_08002F50(void) {
+             }
+             x += (s16)entry->x;
+             y += (s16)entry->y;
++#ifdef PLATFORM_VITA
++            /* Widescreen: parts in the 21-pixel margins beside the original
++             * screen stay (OAM x 256..319 is read as positive, see ppu.c). */
++            if (x > 239 + 24 || x <= -(s16)width - 24 || y > 159 || y <= -(s16)height) {
++#else
+             if (x > 239 || x <= -(s16)width || y > 159 || y <= -(s16)height) {
++#endif
+                 if (((ObjTiles*)entry->tiles)->allocated != 0) {
+                     tileOffset += GetObjTileCount(attr0, attr1);
+                 }
+@@ -859,6 +866,16 @@ u8 IsRectOutsideScreen(s16 x, s16 y, s32 a, s32 b, s32 c, s32 d) {
      u16 left = c;
      s16 right = d;
  
@@ -1606,7 +1637,7 @@ index 0d94efd80..84cd4c9fc 100644
      if (x + right < 0) {
          return 1;
      }
-@@ -866,6 +877,7 @@ u8 IsRectOutsideScreen(s16 x, s16 y, s32 a, s32 b, s32 c, s32 d) {
+@@ -866,6 +883,7 @@ u8 IsRectOutsideScreen(s16 x, s16 y, s32 a, s32 b, s32 c, s32 d) {
      if (x - (s16)left > 0xF0) {
          return 1;
      }
@@ -1614,7 +1645,7 @@ index 0d94efd80..84cd4c9fc 100644
  
      if ((s16)y + (s16)bottom < 0) {
          return 1;
-@@ -988,7 +1000,7 @@ void InitObjTilesAtSlot(ObjTiles* t, u16 slot, void* src, u16 size) {
+@@ -988,7 +1006,7 @@ void InitObjTilesAtSlot(ObjTiles* t, u16 slot, void* src, u16 size) {
          t->sprite = 0;
          t->allocated = 0;
          t->index = slot;
@@ -1623,7 +1654,7 @@ index 0d94efd80..84cd4c9fc 100644
      }
  }
  
-@@ -1011,7 +1023,7 @@ void InitObjPaletteAtSlot(ObjPalette* t, u16 slot, void* src, u16 size) {
+@@ -1011,7 +1029,7 @@ void InitObjPaletteAtSlot(ObjPalette* t, u16 slot, void* src, u16 size) {
          t->src = src;
          t->refCount = 0;
          t->index = slot;
@@ -1632,7 +1663,7 @@ index 0d94efd80..84cd4c9fc 100644
      }
  }
  
-@@ -1043,7 +1055,7 @@ u8 UpdateSpriteFrameTiles(ObjTiles* a, u16* b, void* c) {
+@@ -1043,7 +1061,7 @@ u8 UpdateSpriteFrameTiles(ObjTiles* a, u16* b, void* c) {
                  do {
                      n = GetObjTileCount(b[0], b[1]);
                      RequestDma3Copy((u8*)a->src + ((b[2] & 0x3FF) << 5),
@@ -1641,7 +1672,7 @@ index 0d94efd80..84cd4c9fc 100644
                      acc = acc + n;
                      b += 3;
                      j--;
-@@ -1110,7 +1122,7 @@ ObjPalette* AllocObjPalette(u16 size) {
+@@ -1110,7 +1128,7 @@ ObjPalette* AllocObjPalette(u16 size) {
  
  void UpdateAllocatedObjPalette(ObjPalette* t, void* src) {
      if (t->type == 2) {
@@ -1650,7 +1681,7 @@ index 0d94efd80..84cd4c9fc 100644
      }
  }
  
-@@ -1457,7 +1469,7 @@ void CommitDisplayRegs(void) {
+@@ -1457,7 +1475,7 @@ void CommitDisplayRegs(void) {
      REG_BG3X = gBg3X;
      REG_BG3Y = gBg3Y;
      REG_DISPCNT = gDispCnt;
@@ -1659,7 +1690,7 @@ index 0d94efd80..84cd4c9fc 100644
  }
  
  void VTransInit(void) {
-@@ -1509,7 +1521,7 @@ u8 RequestDma3Copy(void* src, void* dst, u16 size) {
+@@ -1509,7 +1527,7 @@ u8 RequestDma3Copy(void* src, void* dst, u16 size) {
          dma[0] = (u32)src;
          dma[1] = (u32)dst;
          dma[2] = 0x80000000 | (size / 2);
@@ -1668,7 +1699,7 @@ index 0d94efd80..84cd4c9fc 100644
      }
      return 1;
  }
-@@ -1645,7 +1657,7 @@ void FlushDma3Queue(void) {
+@@ -1645,7 +1663,7 @@ void FlushDma3Queue(void) {
          dma[0] = (u32)req[i].src;
          dma[1] = (u32)req[i].dst;
          dma[2] = (req[i].size / 2) | (DMA_ENABLE << 16);
@@ -1677,7 +1708,7 @@ index 0d94efd80..84cd4c9fc 100644
          gDma3Requests->transferredBytes += req[i].size;
      }
      gDma3Requests->requestCount = 0;
-@@ -1699,7 +1711,7 @@ void FlushDma3Queue(void) {
+@@ -1699,7 +1717,7 @@ void FlushDma3Queue(void) {
          dma[0] = (u32)&zero;
          dma[1] = (u32)pend[i].dst;
          dma[2] = (pend[i].size >> 1) | ((DMA_ENABLE | DMA_SRC_FIXED) << 16);
@@ -1686,7 +1717,7 @@ index 0d94efd80..84cd4c9fc 100644
          gDma3Requests->transferredBytes += pend[i].size;
      }
      gDma3Requests->count = 0;
-@@ -2014,7 +2026,7 @@ void LoadBgTiles(s32 bg, void* src, u16 size) {
+@@ -2014,7 +2032,7 @@ void LoadBgTiles(s32 bg, void* src, u16 size) {
  
  void LoadBgPalette(s32 bg, void* src, u16 size) {
      EnableBg(bg);
@@ -1695,7 +1726,7 @@ index 0d94efd80..84cd4c9fc 100644
  }
  
  void LoadBgMap(s32 bg, void* src, u16 size) {
-@@ -2023,11 +2035,11 @@ void LoadBgMap(s32 bg, void* src, u16 size) {
+@@ -2023,11 +2041,11 @@ void LoadBgMap(s32 bg, void* src, u16 size) {
  }
  
  void* GetBgCharBase(s32 bg) {
@@ -1709,7 +1740,7 @@ index 0d94efd80..84cd4c9fc 100644
  }
  
  void SetBgMapBlocks(s32 bg, void* src, u8 w, u8 h) {
-@@ -2054,7 +2066,7 @@ void RedrawBgMapAt(s32 bg, u16 x, u16 y) {
+@@ -2054,7 +2072,7 @@ void RedrawBgMapAt(s32 bg, u16 x, u16 y) {
      }
      e->x = x;
      e->y = y;
@@ -1718,7 +1749,7 @@ index 0d94efd80..84cd4c9fc 100644
      SetBgScroll(bg, x & 7, y & 7);
      e->dirty = 0;
  }
-@@ -2095,7 +2107,7 @@ void ScrollBgMapTo(s32 bg, u16 x, u16 y) {
+@@ -2095,7 +2113,7 @@ void ScrollBgMapTo(s32 bg, u16 x, u16 y) {
          e->y = y;
          return;
      }
@@ -1727,7 +1758,7 @@ index 0d94efd80..84cd4c9fc 100644
      tx = sx >> 3;
      ty = sy >> 3;
      cx = GetBgScrollX(bg) >> 3;
-@@ -2673,7 +2685,7 @@ void LoadPalette(void* src, void* dst, u16 size) {
+@@ -2673,7 +2691,7 @@ void LoadPalette(void* src, void* dst, u16 size) {
  
      base = gFadeWork->slots;
      count = (u16)size / 32;

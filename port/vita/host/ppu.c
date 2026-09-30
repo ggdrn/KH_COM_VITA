@@ -429,7 +429,10 @@ static int DecodeObjs(const uint8_t* oamMem, int bitmapMode, PpuObj* out) {
             o->y -= 256;
         }
         o->x = a1 & 0x1FF;
-        if (o->x >= 256) {
+        /* OAM x is 9-bit signed. The game keeps sprites in the widescreen
+         * margins (x up to 263, engine.c), so 256..319 are right of the
+         * screen; nothing it draws starts left of -88. */
+        if (o->x >= 320) {
             o->x -= 512;
         }
         o->affine = affine;
