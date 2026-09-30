@@ -115,6 +115,14 @@ def gba_elf_symbols(version, absolute):
 def write_romsyms(path, version, symbols):
     absolute = {name for name, _ in symbols}
     blobs = blob_ranges(version)
+    # An address right at the end of a data unit (e.g. a codec's end marker)
+    # that is not the start of another data unit is made relative to that unit,
+    # not to the code that follows it in the ROM: the data units live in their
+    # own sections on the Vita, away from the code.
+    data_secs = [v for obj, secs in gba_sections(version).items() if "/gen/" in obj or "/asm/" in obj
+                 for v in secs.values()]
+    unit_starts = {start for start, _ in data_secs}
+    unit_ends = {start + size for start, size in data_secs} - unit_starts
     elf_syms = None
     lines = []
     unresolved = []
@@ -124,14 +132,17 @@ def write_romsyms(path, version, symbols):
             target = f"0x{addr:X}"
         elif 0x08000000 <= addr < 0x0A000000:
             for start, end, label in blobs:
-                if start <= addr < end:
+                if start <= addr < end or (addr == end and addr in unit_ends):
                     target = f"{label} + 0x{addr - start:X}"
                     break
             else:
                 if elf_syms is None:
                     elf_syms = gba_elf_symbols(version, absolute) or []
                     elf_addrs = [a for a, _ in elf_syms]
-                i = bisect.bisect_right(elf_addrs, addr) - 1 if elf_syms else -1
+                if addr in unit_ends:
+                    i = bisect.bisect_left(elf_addrs, addr) - 1 if elf_syms else -1
+                else:
+                    i = bisect.bisect_right(elf_addrs, addr) - 1 if elf_syms else -1
                 if i >= 0:
                     base, sym = elf_syms[i]
                     target = f"{sym} + 0x{addr - base:X}"
