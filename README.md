@@ -31,10 +31,14 @@ Early and experimental (see `port/vita/VERSION`).
   scrolling map in video memory, so the extra columns are drawn straight from the game's full map: the
   scenery really continues past the original edges, and sprites stay visible there. `fit` (original 3:2 with
   side bars) and `stretch` modes are also available.
-- **Port menu (Start + L + R)**, with two tabs (switch with L / R), saved to `config.ini`:
+- **Port menu (Start + L + R)**, with three tabs (switch with L / R), saved to `config.ini`:
   - **PICTURE**: *Sharp pixels* (every GBA pixel the same size and crisp at the 3.4x scale) and *GBA colors*
     (colours as on the GBA's screen), both on by default; *Smooth edges* (Scale3x upscaler), off by default.
   - **CONTROLS**: each control addition below can be turned off.
+  - **GAME**: the field HP display, the save bank, and *Wide menus* (menus made for the GBA's screen
+    stretched to fill 16:9 instead of showing bars).
+- **10 save slots**: 5 banks of the game's 2 slots (`khcom.sav`, `khcom2.sav` … `khcom5.sav`), switched in
+  the menu without restarting.
 - **Triangle = L + R** together (stock a card / sleight), without pressing both shoulder buttons.
 - **Square = dodge roll**: rolls toward the direction you are holding, or the way the character faces. On the
   GBA this needs a double tap on the D-pad. Works for Sora and Riku.
@@ -83,8 +87,8 @@ Early and experimental (see `port/vita/VERSION`).
 | File | Purpose |
 |---|---|
 | `rom.gba` | Your ROM dump (you copy it) |
-| `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1`, and the menu's choices: `upscale=off\|scale3x`, `sharp`, `gba_colors`, `touch_unstock`, `square_dodge`, `triangle_lr`, `right_stick` (`0\|1`) |
-| `khcom.sav` | Save data (the GBA's SRAM) |
+| `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1`, and the menu's choices: `upscale=off\|scale3x`, `sharp`, `gba_colors`, `touch_unstock`, `square_dodge`, `triangle_lr`, `right_stick`, `field_hud`, `wide_menus` (`0\|1`), `save_bank=1-5` |
+| `khcom.sav` | Save data (the GBA's SRAM), save bank 1; `khcom2.sav` … `khcom5.sav` are banks 2–5 |
 | `log.txt` | Startup trace and a status line with frame timings every second |
 | `log_prev.txt` | The previous run's log (kept when you relaunch after a crash) |
 

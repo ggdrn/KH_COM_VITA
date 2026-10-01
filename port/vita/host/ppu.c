@@ -52,6 +52,7 @@ typedef struct PpuCtx {
     int objCount;
     const PpuBgStream* streams;
     int clipObjs;
+    int sceneMargins;
     int32_t affX[2], affY[2];
     uint32_t latchX[2], latchY[2];
     uint16_t bgLine[4][MAX_W];
@@ -624,8 +625,15 @@ static int InWindowX(int gx, uint16_t winh) {
     if (x2 > GBA_SCREEN_WIDTH) {
         x2 = GBA_SCREEN_WIDTH;
     }
+    /* An empty window (some effects shape a window line by line and leave it
+     * empty on the lines they don't cover): nothing is inside, the margins
+     * included. Before, x1 = x2 = 0 counted as touching the left edge and
+     * let the margins skip the darkening the rest of the line got. */
+    if (x1 == x2) {
+        return 0;
+    }
     /* Windows that touch a screen edge extend into the widescreen margins. */
-    if (x1 <= x2) {
+    if (x1 < x2) {
         int left = x1 == 0 ? -0x10000 : x1;
         int right = x2 >= GBA_SCREEN_WIDTH ? 0x10000 : x2;
         return gx >= left && gx < right;
@@ -741,6 +749,61 @@ static void StackObjLayer(PpuCtx* c, int prio, int useWin) {
     }
 }
 
+/* Whether any layer covers pixel x (the backdrop shows otherwise). */
+static int HasLayer(const PpuCtx* c, const int* bgEnabled, int objOn, int x) {
+    int bg;
+
+    if (objOn && c->objPrio[x] < 4) {
+        return 1;
+    }
+    for (bg = 0; bg < 4; bg++) {
+        if (bgEnabled[bg] && c->bgLine[bg][x] != TRANSPARENT) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Widescreen margins where no layer reaches show the backdrop colour. On a
+ * line whose original 240 columns show no backdrop at all, that colour is
+ * one the GBA never shows (in the field it is cyan, hidden under the scenery,
+ * and it flashed in the margins of room transitions, whose dark overlay
+ * layer only covers the original width): such margin pixels are black.
+ */
+static void HideUnseenBackdrop(PpuCtx* c, uint32_t* out, const int* bgEnabled, int objOn) {
+    int x, any = 0;
+
+    if (c->xoff <= 0 || c->clipObjs || c->sceneMargins) {
+        return;
+    }
+    for (x = 0; x < c->width && !any; x++) {
+        if (x == c->xoff) {
+            x = c->xoff + GBA_SCREEN_WIDTH;
+        }
+        any = x < c->width && !HasLayer(c, bgEnabled, objOn, x);
+    }
+    if (!any) {
+        return;
+    }
+    for (x = c->xoff; x < c->xoff + GBA_SCREEN_WIDTH; x++) {
+        if (!HasLayer(c, bgEnabled, objOn, x)) {
+            return; /* the backdrop is part of the picture */
+        }
+    }
+    for (x = 0; x < c->width; x++) {
+        if (x == c->xoff) {
+            x = c->xoff + GBA_SCREEN_WIDTH;
+            if (x >= c->width) {
+                break;
+            }
+        }
+        if (!HasLayer(c, bgEnabled, objOn, x)) {
+            out[x] = 0xFF000000;
+        }
+    }
+}
+
 static void RenderLine(PpuCtx* c, int y) {
     uint16_t dispcnt = IO16(c, 0x00);
     int mode = dispcnt & 7;
@@ -845,6 +908,7 @@ static void RenderLine(PpuCtx* c, int y) {
         for (x = 0; x < c->width; x++) {
             out[x] = ToRgba(line[x]);
         }
+        HideUnseenBackdrop(c, out, bgEnabled, objOn);
         return;
     }
 
@@ -898,6 +962,7 @@ static void RenderLine(PpuCtx* c, int y) {
         }
         out[x] = ToRgba(top);
     }
+    HideUnseenBackdrop(c, out, bgEnabled, objOn);
 }
 
 /* Frame ---------------------------------------------------------------------------- */
@@ -926,6 +991,7 @@ void PpuRenderSlice(const PpuFrame* frame, int slice, int y0, int y1) {
     c->objCount = sObjCount;
     c->streams = frame->streams;
     c->clipObjs = frame->clipObjs;
+    c->sceneMargins = frame->sceneMargins;
 
     /* Bring the affine reference points to line y0 without drawing. */
     for (y = 0; y < y0; y++) {

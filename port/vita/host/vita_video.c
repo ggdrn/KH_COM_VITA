@@ -224,29 +224,31 @@ void VideoSetNotice(const uint32_t* rgba, int changed) {
 
 /* Drawing ---------------------------------------------------------------------- */
 
-static void DrawFixed(float x0, float x1, int linear) {
+/* The frame's texture columns u0..u1 (0..1, or the original 240 columns of
+ * a menu stretched to the whole screen) drawn over screen columns x0..x1. */
+static void DrawFixed(float x0, float x1, float u0, float u1, int linear) {
     GLint filter = linear ? GL_LINEAR : GL_NEAREST;
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
     glBegin(GL_QUADS);
-    glTexCoord2f(0, 0);
+    glTexCoord2f(u0, 0);
     glVertex3f(x0, 0, 0);
-    glTexCoord2f(1, 0);
+    glTexCoord2f(u1, 0);
     glVertex3f(x1, 0, 0);
-    glTexCoord2f(1, 1);
+    glTexCoord2f(u1, 1);
     glVertex3f(x1, SCREEN_H, 0);
-    glTexCoord2f(0, 1);
+    glTexCoord2f(u0, 1);
     glVertex3f(x0, SCREEN_H, 0);
     glEnd();
 }
 
 /* Draws the bound frame texture, w x h texels; returns 0 when the shader is
  * not needed or unavailable. */
-static int DrawShaded(float x0, float x1, int w, int h, int scaled) {
+static int DrawShaded(float x0, float x1, float u0, float u1, int w, int h, int scaled) {
     const PortConfig* cfg = &gPortConfig;
     const Program* p = &sSharp;
-    float pos[8], uv[8] = { 0, 0, 1, 0, 0, 1, 1, 1 };
+    float pos[8], uv[8] = { u0, 0, u1, 0, u0, 1, u1, 1 };
     float nx0 = x0 / (SCREEN_W / 2) - 1, nx1 = x1 / (SCREEN_W / 2) - 1;
     /* The Scale3x frame is near screen size: always resized the sharp way. */
     int sharp = scaled || cfg->sharp;
@@ -262,7 +264,7 @@ static int DrawShaded(float x0, float x1, int w, int h, int scaled) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glUseProgram(p->program);
     glUniform2f(p->texSize, (float)w, (float)h);
-    glUniform2f(p->outScale, (x1 - x0) / w, (float)SCREEN_H / h);
+    glUniform2f(p->outScale, (x1 - x0) / (w * (u1 - u0)), (float)SCREEN_H / h);
     glUniform1f(p->sharp, sharp ? 1.0f : 0.0f);
     glUniform1f(p->gbaColors, cfg->gbaColors ? 1.0f : 0.0f);
     glEnableVertexAttribArray(0);
@@ -342,8 +344,8 @@ static void DrawNotice(void) {
 }
 
 void VideoPresent(void) {
-    float x0, x1;
-    int w, h, slot;
+    float x0, x1, u0 = 0, u1 = 1;
+    int w, h, slot, wide;
 
     switch (gPortConfig.display) {
     case DISPLAY_FIT: {
@@ -360,7 +362,7 @@ void VideoPresent(void) {
     }
 
     {
-        const uint32_t* frame = RenderLockFront(&slot);
+        const uint32_t* frame = RenderLockFront(&slot, &wide);
 
         if (slot >= 0) {
             /* Already in the texture's memory. */
@@ -376,9 +378,16 @@ void VideoPresent(void) {
         RenderUnlockFront();
     }
 
+    /* A menu drawn for the 240-column screen: its original columns are
+     * stretched to the whole screen (wide_menus) instead of leaving bars. */
+    if (wide && sFrameWidth > GBA_SCREEN_WIDTH) {
+        u0 = (float)(sFrameWidth - GBA_SCREEN_WIDTH) / 2 / sFrameWidth;
+        u1 = 1 - u0;
+    }
+
     glClear(GL_COLOR_BUFFER_BIT);
-    if (!DrawShaded(x0, x1, w, h, slot >= 0)) {
-        DrawFixed(x0, x1, gPortConfig.filter != FILTER_NEAREST);
+    if (!DrawShaded(x0, x1, u0, u1, w, h, slot >= 0)) {
+        DrawFixed(x0, x1, u0, u1, gPortConfig.filter != FILTER_NEAREST);
     }
     if (sBarProgress >= 0) {
         DrawUnstockBar(x0, x1);

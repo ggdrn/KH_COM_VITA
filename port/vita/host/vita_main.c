@@ -23,7 +23,6 @@ unsigned int sceUserMainThreadStackSize = 1 * 1024 * 1024;
 int _newlib_heap_size_user = 128 * 1024 * 1024;
 
 #define DATA_DIR "ux0:data/khcom"
-#define SAVE_PATH DATA_DIR "/khcom.sav"
 #define LOG_PATH DATA_DIR "/log.txt"
 #define CONFIG_PATH DATA_DIR "/config.ini"
 
@@ -39,6 +38,9 @@ PortConfig gPortConfig = {
     .squareDodge = 1,
     .triangleLR = 1,
     .rightStick = 1,
+    .fieldHud = 1,
+    .saveBank = 1,
+    .wideMenus = 1,
 };
 
 static const char* const sUpscaleNames[UPSCALE_COUNT] = { "off", "scale3x" };
@@ -46,8 +48,14 @@ static const char* const sUpscaleNames[UPSCALE_COUNT] = { "off", "scale3x" };
 static SceUID sLogFd = -1;
 int gPortTraceFrames = 3;
 static volatile int sSramDirty;
-static int sSramDirtyFrames;
+static int sSramDirtyFrames; /* frames until the pending save is written */
+static int sSramMaxFrames;   /* ... at the latest, while the game keeps writing */
 static SceUID sSramLock = -1;
+/* The save file in use: bank 1 is khcom.sav (as before banks, and the name
+ * a save from a GBA emulator is copied to), bank n is khcom<n>.sav. */
+static char sSavePath[64];
+static char sSaveTmpPath[68];
+static int sSaveBank;
 
 void PortLog(const char* fmt, ...) {
     char buf[512];
@@ -100,13 +108,45 @@ void PortSoftReset(void) {
 
 /* SRAM ------------------------------------------------------------------------- */
 
+/* Size of a file, or -1. */
+static int FileSize(const char* path) {
+    SceIoStat st;
+
+    return sceIoGetstat(path, &st) < 0 ? -1 : (int)st.st_size;
+}
+
+/* Reads the save file of gPortConfig.saveBank into SRAM. */
 static void LoadSram(void) {
-    SceUID fd = sceIoOpen(SAVE_PATH, SCE_O_RDONLY, 0);
+    SceUID fd;
+
+    sSaveBank = gPortConfig.saveBank;
+    if (sSaveBank <= 1) {
+        snprintf(sSavePath, sizeof(sSavePath), "%s/khcom.sav", DATA_DIR);
+    } else {
+        snprintf(sSavePath, sizeof(sSavePath), "%s/khcom%d.sav", DATA_DIR, sSaveBank);
+    }
+    snprintf(sSaveTmpPath, sizeof(sSaveTmpPath), "%s.tmp", sSavePath);
+
+    /* A write cut short (the app closed meanwhile) leaves the new save in the
+     * .tmp file: complete, if it has the full size. */
+    if (FileSize(sSaveTmpPath) == (int)sizeof(gGbaSram)) {
+        if (FileSize(sSavePath) >= 0) {
+            sceIoRemove(sSavePath);
+        }
+        sceIoRename(sSaveTmpPath, sSavePath);
+        PortLog("save: recovered %s from an interrupted write", sSavePath);
+    } else if (FileSize(sSaveTmpPath) >= 0) {
+        sceIoRemove(sSaveTmpPath);
+    }
 
     memset(gGbaSram, 0xFF, sizeof(gGbaSram));
+    fd = sceIoOpen(sSavePath, SCE_O_RDONLY, 0);
     if (fd >= 0) {
-        sceIoRead(fd, gGbaSram, sizeof(gGbaSram));
+        int n = sceIoRead(fd, gGbaSram, sizeof(gGbaSram));
         sceIoClose(fd);
+        PortLog("save: bank %d, %s (%d bytes)", sSaveBank, sSavePath, n);
+    } else {
+        PortLog("save: bank %d, %s (new)", sSaveBank, sSavePath);
     }
 }
 
@@ -119,15 +159,24 @@ void PortFlushSram(void) {
     }
     if (sSramDirty) {
         sSramDirty = 0;
-        fd = sceIoOpen(SAVE_PATH ".tmp", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+        fd = sceIoOpen(sSaveTmpPath, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
         if (fd < 0) {
-            PortLog("save: cannot open %s (%08X)", SAVE_PATH ".tmp", fd);
+            PortLog("save: cannot open %s (%08X)", sSaveTmpPath, fd);
             sSramDirty = 1;
         } else {
-            sceIoWrite(fd, gGbaSram, sizeof(gGbaSram));
+            int n = sceIoWrite(fd, gGbaSram, sizeof(gGbaSram));
+
             sceIoClose(fd);
-            sceIoRemove(SAVE_PATH);
-            sceIoRename(SAVE_PATH ".tmp", SAVE_PATH);
+            if (n != (int)sizeof(gGbaSram)) {
+                PortLog("save: write failed (%08X)", n);
+                sSramDirty = 1;
+            } else {
+                /* The old file is only replaced by a complete new one; if the
+                 * app closes in between, LoadSram finishes the job. */
+                sceIoRemove(sSavePath);
+                sceIoRename(sSaveTmpPath, sSavePath);
+                PortLog("save: written to %s", sSavePath);
+            }
         }
     }
     if (sSramLock >= 0) {
@@ -173,16 +222,44 @@ static void PowerInit(void) {
 }
 
 void PortSramWritten(void) {
+    /* The game writes a save in several chunks: write the file once they stop
+     * (10 frames), or after 1 s at the latest, so closing the app right after
+     * saving keeps the save. */
+    if (!sSramDirty || sSramMaxFrames == 0) {
+        sSramMaxFrames = 60;
+    }
     sSramDirty = 1;
-    /* The game writes a save in several chunks; flush once it settles. */
-    sSramDirtyFrames = 30;
+    sSramDirtyFrames = 10;
+}
+
+/* Game thread (the menu runs there, with the game paused). */
+void PortSetSaveBank(int bank) {
+    if (bank == sSaveBank) {
+        return;
+    }
+    PortLog("save: switching to bank %d", bank);
+    PortFlushSram();
+    if (sSramLock >= 0) {
+        sceKernelLockMutex(sSramLock, 1, NULL);
+    }
+    gPortConfig.saveBank = bank;
+    LoadSram();
+    sSramDirty = 0;
+    sSramDirtyFrames = 0;
+    sSramMaxFrames = 0;
+    if (sSramLock >= 0) {
+        sceKernelUnlockMutex(sSramLock, 1);
+    }
+    /* A new bank gets formatted (its writes go to the new file). */
+    PortCheckSaveBank();
+    PortSaveConfig();
 }
 
 /* Config ------------------------------------------------------------------------ */
 
 void PortSaveConfig(void) {
     static const char* const displays[] = { "wide", "fit", "stretch" };
-    char buf[1024];
+    char buf[2048];
     int len;
     SceUID fd;
 
@@ -208,11 +285,19 @@ void PortSaveConfig(void) {
                    "# Triangle: L + R (stock a card / sleight)\n"
                    "triangle_lr=%d\n"
                    "# right stick: left/right = L/R, up = L + R, down held 1 s = unstock\n"
-                   "right_stick=%d\n",
+                   "right_stick=%d\n"
+                   "# Game options (also in the Start + L + R menu):\n"
+                   "# field_hud=1: HP display while exploring the map\n"
+                   "field_hud=%d\n"
+                   "# save_bank: 1-5, which save file the game's two slots use (khcom.sav, khcom2.sav...)\n"
+                   "save_bank=%d\n"
+                   "# wide_menus=1: menus (pause, save, deck, status) stretched to the 16:9 screen\n"
+                   "wide_menus=%d\n",
                    displays[gPortConfig.display], gPortConfig.filter == FILTER_NEAREST ? "nearest" : "linear",
                    gPortConfig.swapAB, sUpscaleNames[gPortConfig.upscale], gPortConfig.sharp, gPortConfig.gbaColors,
                    gPortConfig.touchUnstock, gPortConfig.squareDodge, gPortConfig.triangleLR,
-                   gPortConfig.rightStick);
+                   gPortConfig.rightStick, gPortConfig.fieldHud, gPortConfig.saveBank,
+                   gPortConfig.wideMenus);
     fd = sceIoOpen(CONFIG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
     if (fd >= 0) {
         sceIoWrite(fd, buf, len);
@@ -221,7 +306,7 @@ void PortSaveConfig(void) {
 }
 
 static void LoadConfig(void) {
-    char buf[2048];
+    char buf[4096];
     SceUID fd = sceIoOpen(CONFIG_PATH, SCE_O_RDONLY, 0);
     int len, i;
     char* line;
@@ -272,6 +357,13 @@ static void LoadConfig(void) {
             gPortConfig.triangleLR = atoi(eq) != 0;
         } else if (!strcmp(line, "right_stick")) {
             gPortConfig.rightStick = atoi(eq) != 0;
+        } else if (!strcmp(line, "wide_menus")) {
+            gPortConfig.wideMenus = atoi(eq) != 0;
+        } else if (!strcmp(line, "field_hud")) {
+            gPortConfig.fieldHud = atoi(eq) != 0;
+        } else if (!strcmp(line, "save_bank")) {
+            i = atoi(eq);
+            gPortConfig.saveBank = i >= 1 && i <= SAVE_BANKS ? i : 1;
         }
     }
 }
@@ -326,7 +418,12 @@ void PortVBlankWait(void) {
     }
     AudioPump();
     FaultPoll();
-    if (sSramDirtyFrames > 0 && --sSramDirtyFrames == 0) {
+    if (sSramMaxFrames > 0) {
+        sSramMaxFrames--;
+    }
+    if (sSramDirtyFrames > 0 && (--sSramDirtyFrames == 0 || sSramMaxFrames == 0)) {
+        sSramDirtyFrames = 0;
+        sSramMaxFrames = 0;
         PortFlushSram();
     }
     sLastReturn = sceKernelGetProcessTimeWide();

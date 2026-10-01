@@ -37,13 +37,13 @@ The game's code calls GBA hardware and BIOS functions; these files provide them 
 
 | File | Role |
 |---|---|
-| `vita_main.c` | `main()`: clocks, config, save file, logging, frame pacing, then `AgbMain()` (the game). |
+| `vita_main.c` | `main()`: clocks, config, save files (5 banks, written safely within a second of a save), logging, frame pacing, then `AgbMain()` (the game). |
 | `vita_rom.c` | Startup: finds the player's ROM, checks its SHA-1 and copies the game's data into the executable (see "ROM data"). |
 | `ppu.c` | Software renderer of the GBA picture processor: tile/affine/bitmap backgrounds, sprites, windows, blending, mosaic, widescreen margins. |
 | `vita_render.c` | Captures each frame's registers and memory and renders it on two worker threads (cores 1 and 2); with Smooth edges on, the same threads then enlarge it with Scale3x straight into texture memory. |
 | `scale3x.c` | The Scale3x pixel-art upscaler (CPU), line by line through a cached buffer. |
 | `vita_video.c` | vitaGL: uploads the rendered frame and draws it at 960×544 with the sharp-pixels / GBA-colours shader; draws the port's overlays (menu, moogle points notice, unstock bar). |
-| `vita_menu.c` | The port menu (Start + L + R): PICTURE and CONTROLS tabs, saved to `config.ini`. |
+| `vita_menu.c` | The port menu (Start + L + R): PICTURE, CONTROLS and GAME tabs, saved to `config.ini`. |
 | `vita_notice.c` | Moogle points notice on the field; the unstock progress bar under the stocked cards. |
 | `vita_text.c` | 5×7 pixel font for the port's own screens. |
 | `vita_audio.c`, `psg.c` | Mixes the m4a output with the four "Game Boy" PSG channels and resamples to 48 kHz for `sceAudioOut`. |

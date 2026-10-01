@@ -36,7 +36,18 @@ typedef struct PortConfig {
     int squareDodge;   /* Square: dodge roll */
     int triangleLR;    /* Triangle: L + R (stock a card / sleight) */
     int rightStick;    /* right stick: L / R / L + R, down held 1 s unstocks */
+    /* Game options (menu, game tab). */
+    int fieldHud;      /* HP display while exploring the map (src/btl/btl2.c) */
+    int saveBank;      /* 1..SAVE_BANKS: which save file holds the game's two slots */
+    int wideMenus;     /* pause / save menus widened to the whole screen */
 } PortConfig;
+
+/* The game has two save slots; the port keeps SAVE_BANKS files of them, so
+ * 10 slots in all. The bank is chosen in the menu and swapped into SRAM right
+ * away (vita_main.c): the game keeps running, its save and load screens use
+ * the new bank from then on. */
+#define SAVE_BANKS 5
+void PortSetSaveBank(int bank);
 
 extern PortConfig gPortConfig;
 
@@ -51,8 +62,9 @@ void Scale3xRows(const uint32_t* src, int w, int h, uint32_t* dst, int dstStride
 #define SCALED_SLOTS 4
 void RenderSetScaledSlots(uint32_t* const data[SCALED_SLOTS], int stride);
 /* Returns the latest frame and sets *slot to the texture slot holding its
- * Scale3x, or -1 when the upscaler is off; valid until RenderUnlockFront. */
-const uint32_t* RenderLockFront(int* slot);
+ * Scale3x, or -1 when the upscaler is off, and *wide when it is a menu to
+ * stretch to the whole screen; valid until RenderUnlockFront. */
+const uint32_t* RenderLockFront(int* slot, int* wide);
 void RenderUnlockFront(void);
 extern volatile uint32_t gPortRenderUs;
 extern volatile uint32_t gPortScaleUs;

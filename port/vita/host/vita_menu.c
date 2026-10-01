@@ -1,9 +1,10 @@
 /*
- * Port menu, opened with Start + L + R (vita_input.c), in two tabs switched
- * with L / R:
+ * Port menu, opened with Start + L + R (vita_input.c), in tabs switched with
+ * L / R:
  *   PICTURE   the picture enhancements (vita_video.c, vita_render.c),
  *   CONTROLS  the control additions, each of which can be turned off
- *             (vita_input.c).
+ *             (vita_input.c),
+ *   GAME      the HP display on the field and the save bank (vita_main.c).
  *
  * The game is paused while it is open (it runs inside the frame wait, see
  * vita_main.c): the last frame stays on screen with the menu drawn over it,
@@ -13,6 +14,7 @@
 #include <psp2/ctrl.h>
 #include <psp2/kernel/threadmgr.h>
 
+#include <stdio.h>
 #include <string.h>
 
 #include "port.h"
@@ -34,9 +36,12 @@ static uint32_t sCanvas[MENU_W * MENU_H];
 #define COL_SELECT RGBA(255, 214, 64, 255)
 #define COL_TAB RGBA(40, 56, 130, 255)
 
-enum { TAB_PICTURE, TAB_CONTROLS, TAB_COUNT };
+enum { TAB_PICTURE, TAB_CONTROLS, TAB_GAME, TAB_COUNT };
 
-static const char* const sTabNames[TAB_COUNT] = { "PICTURE", "CONTROLS" };
+static const char* const sTabNames[TAB_COUNT] = { "PICTURE", "CONTROLS", "GAME" };
+
+/* The save bank picked in the menu; applied (restart) when it closes. */
+static int sBank;
 
 /* An on/off option, or (toggle == NULL) a special item handled by ItemValue /
  * ChangeItem below. */
@@ -46,7 +51,7 @@ typedef struct {
     int* toggle;
 } Item;
 
-enum { ITEM_UPSCALE = 1, ITEM_CLOSE };
+enum { ITEM_UPSCALE = 1, ITEM_BANK, ITEM_CLOSE };
 
 #define MAX_ITEMS 5
 
@@ -65,7 +70,18 @@ static const Item sControlItems[] = {
     { "CLOSE", NULL, NULL },
 };
 
+static const Item sGameItems[] = {
+    { "FIELD HP DISPLAY", "SORA HP ALSO WHILE EXPLORING THE MAP", &gPortConfig.fieldHud },
+    { "SAVE BANK", "2 SLOTS EACH: THE SAVE/LOAD SCREENS USE THIS BANK", NULL },
+    { "WIDE MENUS", "MENUS STRETCHED TO FILL THE WHOLE SCREEN", &gPortConfig.wideMenus },
+    { "CLOSE", NULL, NULL },
+};
+
 static const Item* TabItems(int tab, int* count) {
+    if (tab == TAB_GAME) {
+        *count = sizeof(sGameItems) / sizeof(sGameItems[0]);
+        return sGameItems;
+    }
     if (tab == TAB_CONTROLS) {
         *count = sizeof(sControlItems) / sizeof(sControlItems[0]);
         return sControlItems;
@@ -79,7 +95,10 @@ static int ItemKind(const Item* it) {
     if (it->toggle != NULL) {
         return 0;
     }
-    return it == &sPictureItems[0] ? ITEM_UPSCALE : ITEM_CLOSE;
+    if (it == &sPictureItems[0]) {
+        return ITEM_UPSCALE;
+    }
+    return it == &sGameItems[1] ? ITEM_BANK : ITEM_CLOSE;
 }
 
 static const char* const sUpscaleLabels[UPSCALE_COUNT] = { "OFF", "SCALE3X" };
@@ -88,6 +107,12 @@ static const char* ItemValue(const Item* it) {
     switch (ItemKind(it)) {
     case ITEM_UPSCALE:
         return sUpscaleLabels[gPortConfig.upscale];
+    case ITEM_BANK: {
+        static char label[24];
+
+        snprintf(label, sizeof(label), "%d (SLOTS %d-%d)", sBank, sBank * 2 - 1, sBank * 2);
+        return label;
+    }
     case ITEM_CLOSE:
         return "";
     }
@@ -101,6 +126,8 @@ static const char* ItemValue(const Item* it) {
 static void ChangeItem(const Item* it, int dir) {
     if (ItemKind(it) == ITEM_UPSCALE) {
         gPortConfig.upscale = (gPortConfig.upscale + UPSCALE_COUNT + dir) % UPSCALE_COUNT;
+    } else if (ItemKind(it) == ITEM_BANK) {
+        sBank = (sBank - 1 + SAVE_BANKS + dir) % SAVE_BANKS + 1;
     } else if (it->toggle != NULL) {
         *it->toggle = !*it->toggle;
     }
@@ -175,6 +202,7 @@ void MenuRun(void) {
     int done = 0;
 
     gPortMenuOpen = 1;
+    sBank = gPortConfig.saveBank;
     PortLog("menu: opened");
     while (!done) {
         uint32_t b = ReadButtons();
@@ -219,4 +247,6 @@ void MenuRun(void) {
             gPortConfig.upscale, gPortConfig.sharp, gPortConfig.gbaColors, gPortConfig.touchUnstock,
             gPortConfig.squareDodge, gPortConfig.triangleLR, gPortConfig.rightStick);
     gPortMenuOpen = 0;
+    /* Swaps the other save file in. */
+    PortSetSaveBank(sBank);
 }

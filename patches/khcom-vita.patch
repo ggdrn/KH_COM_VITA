@@ -695,7 +695,7 @@ index 50853dbe8..6079f6ae9 100644
  
      if (p->unk_0E8 == 3) {
 diff --git a/src/btl/btl2.c b/src/btl/btl2.c
-index 7e1efbdef..ff93ba964 100644
+index 7e1efbdef..9e9587550 100644
 --- a/src/btl/btl2.c
 +++ b/src/btl/btl2.c
 @@ -1,3 +1,8 @@
@@ -707,14 +707,18 @@ index 7e1efbdef..ff93ba964 100644
  #include "task_descriptors.h"
  #include "battle_localized_data.h"
  #include "system_state.h"
-@@ -407,23 +412,39 @@ s32 task_btl_hpply_1(BtlHpplyWork* work) {
+@@ -407,23 +412,44 @@ s32 task_btl_hpply_1(BtlHpplyWork* work) {
      return 1;
  }
  
 +#ifdef PLATFORM_VITA
-+/* The portrait reaches above the top of the screen at y = 2; the Vita port
-+ * moves the player's HP display down so it is not cut off. */
++/* The portrait reaches 9 pixels above y = 2, past the top of the screen; the
++ * Vita port moves the player's HP display down so it shows, all but its top
++ * line, where the art itself is cut off flat. In widescreen it also moves
++ * left into the extra margin, in line with the hand of cards, which already
++ * reaches into it. */
 +#define HUD_Y(y) ((y) + 6)
++#define HUD_X(x) ((x) - (PortWideMargin() > 0 ? 10 : 0))
 +/* Sprite priority (BG layering) and draw order of the HP display; the field
 + * HP display sends it behind open menus (PortFieldHudDraw). */
 +static u16 sHudAttr = 0x410;
@@ -723,6 +727,7 @@ index 7e1efbdef..ff93ba964 100644
 +#define HUD_ORDER(n) ((n) + sHudOrderBias)
 +#else
 +#define HUD_Y(y) (y)
++#define HUD_X(x) (x)
 +#define HUD_ATTR 0x410
 +#define HUD_ORDER(n) (n)
 +#endif
@@ -732,40 +737,40 @@ index 7e1efbdef..ff93ba964 100644
      ObjAffine* aff;
  
 -    DrawSprite(4, 2, work->gfx, work->tiles, work->palette, 0, 0x410, 1);
-+    DrawSprite(4, HUD_Y(2), work->gfx, work->tiles, work->palette, 0, HUD_ATTR, HUD_ORDER(1));
++    DrawSprite(HUD_X(4), HUD_Y(2), work->gfx, work->tiles, work->palette, 0, HUD_ATTR, HUD_ORDER(1));
  
      switch (work->unk_68) {
      case 0:
 -        DrawSprite(4, 2, work->gfx2, work->tiles2, work->palette2, 0, 0x410, 4);
-+        DrawSprite(4, HUD_Y(2), work->gfx2, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
++        DrawSprite(HUD_X(4), HUD_Y(2), work->gfx2, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
          break;
      case 1:
 -        DrawSprite(4, 2, gBHpgagFrame27, work->tiles2, work->palette2, 0, 0x410, 4);
 -        DrawSprite(4, 2, work->gfx3, work->tiles3, work->palette2, 0, 0x410, 3);
-+        DrawSprite(4, HUD_Y(2), gBHpgagFrame27, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
-+        DrawSprite(4, HUD_Y(2), work->gfx3, work->tiles3, work->palette2, 0, HUD_ATTR, HUD_ORDER(3));
++        DrawSprite(HUD_X(4), HUD_Y(2), gBHpgagFrame27, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
++        DrawSprite(HUD_X(4), HUD_Y(2), work->gfx3, work->tiles3, work->palette2, 0, HUD_ATTR, HUD_ORDER(3));
          break;
      case 2:
 -        DrawSprite(4, 2, work->gfx2, work->tiles2, work->palette2, 0, 0x410, 4);
 -        DrawSprite(4, 2, work->gfx3, work->tiles3, work->palette2, 0, 0x410, 5);
-+        DrawSprite(4, HUD_Y(2), work->gfx2, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
-+        DrawSprite(4, HUD_Y(2), work->gfx3, work->tiles3, work->palette2, 0, HUD_ATTR, HUD_ORDER(5));
++        DrawSprite(HUD_X(4), HUD_Y(2), work->gfx2, work->tiles2, work->palette2, 0, HUD_ATTR, HUD_ORDER(4));
++        DrawSprite(HUD_X(4), HUD_Y(2), work->gfx3, work->tiles3, work->palette2, 0, HUD_ATTR, HUD_ORDER(5));
          break;
      }
  
-@@ -502,9 +523,9 @@ void task_btl_hpply_2(BtlHpplyWork* work) {
+@@ -502,9 +528,9 @@ void task_btl_hpply_2(BtlHpplyWork* work) {
          }
  
          if (work->unk_68 == 1) {
 -            DrawSprite(31, 9, gBHpgagFrame26, work->tiles4, work->palette2, aff, 0x410, 2);
-+            DrawSprite(31, HUD_Y(9), gBHpgagFrame26, work->tiles4, work->palette2, aff, HUD_ATTR, HUD_ORDER(2));
++            DrawSprite(HUD_X(31), HUD_Y(9), gBHpgagFrame26, work->tiles4, work->palette2, aff, HUD_ATTR, HUD_ORDER(2));
          } else {
 -            DrawSprite(31, 6, gBHpgagFrame0, work->tiles4, work->palette2, aff, 0x410, 2);
-+            DrawSprite(31, HUD_Y(6), gBHpgagFrame0, work->tiles4, work->palette2, aff, HUD_ATTR, HUD_ORDER(2));
++            DrawSprite(HUD_X(31), HUD_Y(6), gBHpgagFrame0, work->tiles4, work->palette2, aff, HUD_ATTR, HUD_ORDER(2));
          }
      }
  }
-@@ -2023,3 +2044,182 @@ TaskDesc gTaskDescBtlStart = {
+@@ -2023,3 +2049,182 @@ TaskDesc gTaskDescBtlStart = {
      NULL,
      sizeof(BtlStartWork),
  };
@@ -900,7 +905,7 @@ index 7e1efbdef..ff93ba964 100644
 +    s32 max = gGameState.progression.maxHp;
 +    s32 hp = gGameState.hp;
 +
-+    if (!sFieldHudOn || max <= 0 || PortUiOverlayActive()) {
++    if (!sFieldHudOn || max <= 0 || PortUiOverlayActive() || !PortFieldHudEnabled()) {
 +        return;
 +    }
 +    if (hp > max) {
@@ -2698,7 +2703,7 @@ index cf261c936..71a88247c 100644
  
      gUnk_02034A18 = d;
 diff --git a/src/map/map.c b/src/map/map.c
-index 2556aec0a..bfbbb5ef3 100644
+index 2556aec0a..fb8a400de 100644
 --- a/src/map/map.c
 +++ b/src/map/map.c
 @@ -1,3 +1,7 @@
@@ -2763,6 +2768,46 @@ index 2556aec0a..bfbbb5ef3 100644
          q++;
      }
  }
+@@ -5443,6 +5461,9 @@ s32 func_080EDD7C(MapMenuWork* w) {
+ void Task_MapMenu_0(MapMenuWork* w) {
+     s8 v;
+ 
++#ifdef PLATFORM_VITA
++    PortWideMenu(1);
++#endif
+     gFieldState->flags |= 0x1000;
+     gFieldState->flags |= 0x80;
+     gFieldState->flags |= 0x2000;
+@@ -5777,6 +5798,9 @@ void Task_MapMenu_2(MapMenuWork* w) {
+ void Task_MapMenu_3(MapMenuWork* w) {
+     s32 i;
+ 
++#ifdef PLATFORM_VITA
++    PortWideMenu(-1);
++#endif
+     func_080ED06C(w, 0);
+     func_080ECFE8(w, 0);
+     ReleaseObjPalette(w->palette2);
+@@ -6168,6 +6192,9 @@ s32 func_080EED44(MapSaveWork* w) {
+ }
+ 
+ void Task_MapSave_0(MapSaveWork* w) {
++#ifdef PLATFORM_VITA
++    PortWideMenu(1);
++#endif
+     gFieldState->flags |= 0x1000;
+     gFieldState->flags |= 0x80;
+     gUnk_0203C7AC->flags |= 0x2000;
+@@ -6333,6 +6360,9 @@ void Task_MapSave_2(MapSaveWork* w) {
+ void Task_MapSave_3(MapSaveWork* w) {
+     u32 f;
+ 
++#ifdef PLATFORM_VITA
++    PortWideMenu(-1);
++#endif
+     func_080EE580(w, 0);
+     ReleaseObjPalette(w->palette2);
+     ReleaseObjTiles(w->tiles2);
 diff --git a/src/map/map_cell.c b/src/map/map_cell.c
 index feca5711d..8a2ba5d59 100644
 --- a/src/map/map_cell.c
@@ -3717,7 +3762,7 @@ index 546e602b3..7bcbc062d 100644
          case 0:
          case 1:
 diff --git a/src/save.c b/src/save.c
-index 29d22733b..430104bfe 100644
+index 29d22733b..231295ee8 100644
 --- a/src/save.c
 +++ b/src/save.c
 @@ -1,3 +1,4 @@
@@ -3775,6 +3820,43 @@ index 29d22733b..430104bfe 100644
          } while (i <= 19);
      }
  
+@@ -789,3 +790,36 @@ void ReadKeysRaw(void) {
+     gRawKeysPrev = gRawKeys;
+     gRawKeys = keys;
+ }
++
++#ifdef PLATFORM_VITA
++/*
++ * Vita port: another save bank was loaded into SRAM (vita_main.c). Check and
++ * repair it the way the game does at boot (mode_copyright1.c), so a new,
++ * empty bank is formatted before the save and load screens read it.
++ */
++void PortCheckSaveBank(void) {
++    if (SaveRepairHeader() == 1) {
++        SaveClearHeader();
++        SaveClearSystem();
++        SaveClearFileLarge(0);
++        SaveClearFileLarge(1);
++        SaveClearFileSmall(0);
++        SaveClearFileSmall(1);
++    }
++    if (SaveRepairFileLarge(0) == 1) {
++        SaveClearFileLarge(0);
++    }
++    if (SaveRepairFileLarge(1) == 1) {
++        SaveClearFileLarge(1);
++    }
++    if (SaveRepairFileSmall(0) == 1) {
++        SaveClearFileSmall(0);
++    }
++    if (SaveRepairFileSmall(1) == 1) {
++        SaveClearFileSmall(1);
++    }
++    if (SaveRepairSystem() == 1) {
++        SaveClearSystem();
++    }
++}
++#endif
 diff --git a/src/sio/mode_sio.c b/src/sio/mode_sio.c
 index 34ea304b1..d041e11b9 100644
 --- a/src/sio/mode_sio.c
@@ -4487,7 +4569,7 @@ index 86313bbf8..8116ce4da 100644
  
          if (gDmaStream.update != 0) {
 diff --git a/src/taskpool.c b/src/taskpool.c
-index 8bfb8069d..b83ecb69e 100644
+index 8bfb8069d..5eb0bff90 100644
 --- a/src/taskpool.c
 +++ b/src/taskpool.c
 @@ -1,3 +1,7 @@
@@ -4507,12 +4589,15 @@ index 8bfb8069d..b83ecb69e 100644
  }
  
  void ModeStart(Mode* mode, s32 arg) {
-@@ -242,6 +246,9 @@ void ModeStart(Mode* mode, s32 arg) {
+@@ -242,6 +246,12 @@ void ModeStart(Mode* mode, s32 arg) {
      FadeReset();
      MosaicReset();
      gCurrentMode = mode;
 +#ifdef PLATFORM_VITA
-+    PortLog("ModeStart %p (init %p, arg %d)", (void*)mode, (void*)mode->init, (int)arg);
++    PortLog("ModeStart %s %p (init %p, arg %d)", mode->name != 0 ? mode->name : "?", (void*)mode,
++            (void*)mode->init, (int)arg);
++    /* Per-screen widescreen treatment (vita_render.c). */
++    PortModeStart(mode->name);
 +#endif
  
      if (mode->init != 0) {

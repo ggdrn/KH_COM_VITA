@@ -48,6 +48,18 @@ void PortCaptureBgStreams(void);
  * columns, as the UI moves things out of view by placing them off screen. */
 void PortUiOverlay(int delta);
 int PortUiOverlayActive(void);
+/* A menu over the field opened (+1) or closed (-1). While one is open, it is
+ * stretched to the whole 16:9 screen (wide_menus, vita_video.c). */
+void PortWideMenu(int delta);
+/* A game mode (screen) starts: picks its widescreen treatment by name
+ * (logos and title: margins in the scene's background colour; menu screens:
+ * stretched like the field menus). */
+void PortModeStart(const char* name);
+/* Columns the widescreen frame adds on each side of the original 240 (0 in
+ * the 3:2 modes). */
+int PortWideMargin(void);
+/* The HP display on the field is turned on in the port menu. */
+int PortFieldHudEnabled(void);
 /* The rear touch pad was held: return the stocked cards to the hand (card
  * battles; vita_input.c). */
 int PortTakeUnstockRequest(void);
@@ -76,6 +88,8 @@ uint16_t PortReadKeys(void);
 extern uint8_t gPortDodgePressed;
 /* Persists the emulated SRAM after the game wrote to it. */
 void PortSramWritten(void);
+/* Game side (src/save.c): checks and repairs SRAM after a save bank swap. */
+void PortCheckSaveBank(void);
 /* Restarts the application (BIOS SoftReset). */
 void PortSoftReset(void) __attribute__((noreturn));
 /* Debug log (printf-style) to ux0:data/khcom/log.txt. */

@@ -35,6 +35,7 @@ static int sSlotStride;
 static int sScaledSlot[2] = { -1, -1 }; /* slot holding the Scale3x of sRgba[i] */
 static int sShown[2] = { -1, -1 };      /* slots of the last two presented frames */
 static int sTarget;                     /* slot being written */
+static int sWideFrame[2];               /* sRgba[i] is a menu, to stretch */
 static volatile int sPhase;             /* what the slice thread does next: 0 render, 1 scale */
 static int sWidth;
 static int sCapture;          /* snapshot the game thread fills */
@@ -47,6 +48,50 @@ volatile uint32_t gPortRenderUs;
 volatile uint32_t gPortScaleUs; /* Scale3x part of gPortRenderUs */
 volatile uint32_t gPortCaptureWaitUs;
 
+
+/*
+ * Logos and title screen: the margins take the scene's background colour,
+ * the most common colour of the picture's edge column on that side, so they
+ * blend with the scene (and follow its fades) instead of the black backdrop.
+ */
+static uint32_t EdgeColour(const uint32_t* px, int x) {
+    uint32_t best = px[x];
+    int bestCount = 0, y, k;
+
+    for (y = 0; y < GBA_SCREEN_HEIGHT; y += 4) {
+        uint32_t c = px[y * sWidth + x];
+        int count = 0;
+
+        if (c == best && bestCount > 0) {
+            continue;
+        }
+        for (k = 0; k < GBA_SCREEN_HEIGHT; k += 2) {
+            count += px[k * sWidth + x] == c;
+        }
+        if (count > bestCount) {
+            best = c;
+            bestCount = count;
+        }
+    }
+    return best;
+}
+
+static void SceneMargins(uint32_t* px) {
+    int xoff = (sWidth - GBA_SCREEN_WIDTH) / 2;
+    uint32_t left = EdgeColour(px, xoff), right = EdgeColour(px, xoff + GBA_SCREEN_WIDTH - 1);
+    int x, y;
+
+    for (y = 0; y < GBA_SCREEN_HEIGHT; y++) {
+        uint32_t* row = px + y * sWidth;
+
+        for (x = 0; x < xoff; x++) {
+            row[x] = left;
+        }
+        for (x = xoff + GBA_SCREEN_WIDTH; x < sWidth; x++) {
+            row[x] = right;
+        }
+    }
+}
 
 /* With the front mutex held: a slot the GPU is not using. */
 static int FreeSlot(void) {
@@ -106,6 +151,11 @@ static int RenderThread(SceSize args, void* argp) {
         sceKernelSignalSema(sWorkSema[1], 1);
         PpuRenderSlice(frame, 0, 0, SPLIT_LINE);
         sceKernelWaitSema(sDoneSema, 1, NULL);
+
+        if (frame->sceneMargins && sWidth > GBA_SCREEN_WIDTH) {
+            SceneMargins(sRgba[sBack]);
+        }
+        sWideFrame[sBack] = frame->wideMenu;
 
         /* Scale3x reads one line past its half, so it starts once both are drawn. */
         sScaledSlot[sBack] = -1;
@@ -189,6 +239,41 @@ void PortSetBgStream(int bg, const void* const* map, int width, int height, int 
 
 static int sUiOverlays;
 
+static int sSceneMargins;
+static int sWideMenus;  /* field menus open (PortWideMenu) */
+static int sWideMode;   /* the current mode is a menu screen */
+
+void PortWideMenu(int delta) {
+    sWideMenus += delta;
+    if (sWideMenus < 0) {
+        sWideMenus = 0;
+    }
+}
+
+void PortModeStart(const char* name) {
+    static const char* const sScene[] = { "mode_copyright1", "mode_copyright2", "mode_wLogo", "mode_title" };
+    static const char* const sMenus[] = { "mode_status", "Mode_Deck", "Mode_MenuLoad" };
+    unsigned i;
+
+    sSceneMargins = 0;
+    sWideMode = 0;
+    sWideMenus = 0;
+    for (i = 0; name != NULL && i < sizeof(sScene) / sizeof(sScene[0]); i++) {
+        sSceneMargins |= !strcmp(name, sScene[i]);
+    }
+    for (i = 0; name != NULL && i < sizeof(sMenus) / sizeof(sMenus[0]); i++) {
+        sWideMode |= !strcmp(name, sMenus[i]);
+    }
+}
+
+int PortWideMargin(void) {
+    return (sWidth - GBA_SCREEN_WIDTH) / 2;
+}
+
+int PortFieldHudEnabled(void) {
+    return gPortConfig.fieldHud;
+}
+
 int PortUiOverlayActive(void) {
     return sUiOverlays > 0;
 }
@@ -212,6 +297,8 @@ void PortCaptureSubmit(void) {
 
     memcpy(f->streams, sStreams, sizeof(f->streams));
     f->clipObjs = sUiOverlays > 0;
+    f->sceneMargins = sSceneMargins;
+    f->wideMenu = (sWideMenus > 0 || sWideMode) && gPortConfig.wideMenus;
     memcpy(f->pltt, gGbaPltt, sizeof(f->pltt));
     memcpy(f->oam, gGbaOam, sizeof(f->oam));
     memcpy(f->vram, gGbaVram, sizeof(f->vram));
@@ -224,8 +311,9 @@ void PortCaptureSubmit(void) {
     sceKernelSignalSema(sWorkSema[0], 1);
 }
 
-const uint32_t* RenderLockFront(int* slot) {
+const uint32_t* RenderLockFront(int* slot, int* wide) {
     sceKernelLockMutex(sFrontMutex, 1, NULL);
+    *wide = sWideFrame[sFront];
     *slot = -1;
     if (gPortConfig.upscale != UPSCALE_SCALE3X || sSlotData[0] == NULL) {
         return sRgba[sFront];
