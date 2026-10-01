@@ -31,10 +31,19 @@ Early and experimental (see `port/vita/VERSION`).
   scrolling map in video memory, so the extra columns are drawn straight from the game's full map: the
   scenery really continues past the original edges, and sprites stay visible there. `fit` (original 3:2 with
   side bars) and `stretch` modes are also available.
+- **Port menu (Start + L + R)**, with two tabs (switch with L / R), saved to `config.ini`:
+  - **PICTURE**: *Sharp pixels* (every GBA pixel the same size and crisp at the 3.4x scale) and *GBA colors*
+    (colours as on the GBA's screen), both on by default; *Smooth edges* (Scale3x upscaler), off by default.
+  - **CONTROLS**: each control addition below can be turned off.
 - **Triangle = L + R** together (stock a card / sleight), without pressing both shoulder buttons.
-  **Hold Triangle** to return the stocked cards to your hand (Sora and Riku), which the GBA version can't do.
 - **Square = dodge roll**: rolls toward the direction you are holding, or the way the character faces. On the
   GBA this needs a double tap on the D-pad. Works for Sora and Riku.
+- **Right stick for the cards**: left / right = L / R (previous / next card), up = L + R (stock / sleight).
+- **Return the stocked cards to the hand** (Sora), which the GBA version can't do: hold the rear touch pad or
+  the right stick down for 1 s; a bar under the stocked cards fills up meanwhile. The cards go back to their
+  places in the deck and the cursor stays where it was.
+- **Moogle points notice**: picking up moogle points on the field shows the amount in the bottom-right
+  corner, then your total.
 - Left analog stick works as the D-pad.
 - Uses three CPU cores: game logic on core 0 and rendering on cores 1 and 2 (audio also runs on core 2).
 
@@ -45,9 +54,12 @@ Early and experimental (see `port/vita/VERSION`).
 | D-pad / left stick | D-pad |
 | Cross / Circle | A / B (swap with `swap_ab=1`) |
 | L / R | L / R |
-| Triangle | L + R (stock / sleight); hold: unstock the cards |
+| Triangle | L + R (stock / sleight) |
 | Square | Dodge roll |
+| Right stick | Left / right: L / R; up: L + R; down held 1 s: unstock the cards |
+| Rear touch pad, held 1 s | Unstock the cards |
 | Start / Select | Start / Select |
+| Start + L + R | Port menu |
 
 ## Installing on the Vita
 
@@ -71,7 +83,7 @@ Early and experimental (see `port/vita/VERSION`).
 | File | Purpose |
 |---|---|
 | `rom.gba` | Your ROM dump (you copy it) |
-| `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1` |
+| `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1`, and the menu's choices: `upscale=off\|scale3x`, `sharp`, `gba_colors`, `touch_unstock`, `square_dodge`, `triangle_lr`, `right_stick` (`0\|1`) |
 | `khcom.sav` | Save data (the GBA's SRAM) |
 | `log.txt` | Startup trace and a status line with frame timings every second |
 | `log_prev.txt` | The previous run's log (kept when you relaunch after a crash) |
@@ -161,7 +173,8 @@ A file-by-file guide, the build/runtime flow and the conventions for changing th
 | Sound | `port/vita/game/m4a_port.c`, `host/vita_audio.c` | The m4a sequencer and mixer (originally ARM/Thumb assembly) rewritten in C, resampled to 48 kHz for `sceAudioOut` |
 | Video | `port/vita/host/ppu.c`, `vita_render.c`, `vita_video.c` | Scanline renderer for the GBA picture processor (tile/affine/bitmap backgrounds, sprites, windows, blending, mosaic), run on two cores and presented with vitaGL |
 | Widescreen | `port/vita/game/widescreen.c`, `ppu.c` | Captures each streamed map's camera after VBlank; the renderer fetches the widescreen margins from the full map |
-| Input | `port/vita/host/vita_input.c`, dodge hooks in `src/btl/btl.c` | Button mapping, Triangle → L+R, Square → dodge roll |
+| Input | `port/vita/host/vita_input.c`, dodge hooks in `src/btl/btl.c`, unstock in `src/card/card_card.c` | Button mapping, Triangle → L+R, Square → dodge roll, right stick card controls, unstock (rear touch / right stick down) |
+| Port menu and overlays | `port/vita/host/vita_menu.c`, `vita_notice.c`, `vita_text.c` | Start + L + R menu (picture and control options), moogle points notice, unstock progress bar |
 | GBA-style faults | `port/vita/host/vita_fault.c` | With kubridge, a data-abort handler decodes the faulting Thumb-2 load/store and performs it as the GBA would: BIOS-region reads return the BIOS open-bus value, writes there are dropped, raw GBA addresses are translated. Each emulated site is logged once |
 | Freeze watchdog | `port/vita/host/vita_fault.c` | If the game loop stops for 5 s, logs the state and forces a crash dump so a freeze can be located |
 | Decomp changes | `patches/khcom-vita.patch` | Hardware addresses routed through macros that still expand to the original values on GBA, plus Vita-only fixes. The GBA build still produces a byte-identical ROM |

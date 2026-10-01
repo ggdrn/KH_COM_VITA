@@ -31,7 +31,17 @@ PortConfig gPortConfig = {
     .display = DISPLAY_WIDE,
     .filter = FILTER_LINEAR,
     .swapAB = 0,
+    /* Picture: crisp pixels and GBA colours; the upscaler is opt-in. */
+    .upscale = UPSCALE_OFF,
+    .sharp = 1,
+    .gbaColors = 1,
+    .touchUnstock = 1,
+    .squareDodge = 1,
+    .triangleLR = 1,
+    .rightStick = 1,
 };
+
+static const char* const sUpscaleNames[UPSCALE_COUNT] = { "off", "scale3x" };
 
 static SceUID sLogFd = -1;
 int gPortTraceFrames = 3;
@@ -170,25 +180,54 @@ void PortSramWritten(void) {
 
 /* Config ------------------------------------------------------------------------ */
 
-static void LoadConfig(void) {
+void PortSaveConfig(void) {
+    static const char* const displays[] = { "wide", "fit", "stretch" };
     char buf[1024];
-    SceUID fd = sceIoOpen(CONFIG_PATH, SCE_O_RDONLY, 0);
     int len;
+    SceUID fd;
+
+    len = snprintf(buf, sizeof(buf),
+                   "# display: wide (16:9, shows more of the scene), fit (original 3:2), stretch\n"
+                   "display=%s\n"
+                   "# filter: linear or nearest (used when upscale=off and sharp=0)\n"
+                   "filter=%s\n"
+                   "# swap_ab=1 maps Circle to GBA A and Cross to GBA B\n"
+                   "swap_ab=%d\n"
+                   "# Picture enhancements (also in the Start + L + R menu):\n"
+                   "# upscale: scale3x or off (smooths the edges of the pixel art)\n"
+                   "upscale=%s\n"
+                   "# sharp=1: crisp, even pixels when upscale=off\n"
+                   "sharp=%d\n"
+                   "# gba_colors=1: colours as on the GBA's screen\n"
+                   "gba_colors=%d\n"
+                   "# Control additions (also in the Start + L + R menu), 1 = on:\n"
+                   "# rear touch held 1 s returns the stocked cards to the hand\n"
+                   "touch_unstock=%d\n"
+                   "# Square: dodge roll\n"
+                   "square_dodge=%d\n"
+                   "# Triangle: L + R (stock a card / sleight)\n"
+                   "triangle_lr=%d\n"
+                   "# right stick: left/right = L/R, up = L + R, down held 1 s = unstock\n"
+                   "right_stick=%d\n",
+                   displays[gPortConfig.display], gPortConfig.filter == FILTER_NEAREST ? "nearest" : "linear",
+                   gPortConfig.swapAB, sUpscaleNames[gPortConfig.upscale], gPortConfig.sharp, gPortConfig.gbaColors,
+                   gPortConfig.touchUnstock, gPortConfig.squareDodge, gPortConfig.triangleLR,
+                   gPortConfig.rightStick);
+    fd = sceIoOpen(CONFIG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    if (fd >= 0) {
+        sceIoWrite(fd, buf, len);
+        sceIoClose(fd);
+    }
+}
+
+static void LoadConfig(void) {
+    char buf[2048];
+    SceUID fd = sceIoOpen(CONFIG_PATH, SCE_O_RDONLY, 0);
+    int len, i;
     char* line;
 
     if (fd < 0) {
-        fd = sceIoOpen(CONFIG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-        if (fd >= 0) {
-            static const char defaults[] =
-                "# display: wide (16:9, shows more of the scene), fit (original 3:2), stretch\n"
-                "display=wide\n"
-                "# filter: linear or nearest\n"
-                "filter=linear\n"
-                "# swap_ab=1 maps Circle to GBA A and Cross to GBA B\n"
-                "swap_ab=0\n";
-            sceIoWrite(fd, defaults, sizeof(defaults) - 1);
-            sceIoClose(fd);
-        }
+        PortSaveConfig();
         return;
     }
     len = sceIoRead(fd, buf, sizeof(buf) - 1);
@@ -215,6 +254,24 @@ static void LoadConfig(void) {
             gPortConfig.filter = !strcmp(eq, "nearest") ? FILTER_NEAREST : FILTER_LINEAR;
         } else if (!strcmp(line, "swap_ab")) {
             gPortConfig.swapAB = atoi(eq) != 0;
+        } else if (!strcmp(line, "upscale")) {
+            for (i = 0; i < UPSCALE_COUNT; i++) {
+                if (!strcmp(eq, sUpscaleNames[i])) {
+                    gPortConfig.upscale = i;
+                }
+            }
+        } else if (!strcmp(line, "sharp")) {
+            gPortConfig.sharp = atoi(eq) != 0;
+        } else if (!strcmp(line, "gba_colors")) {
+            gPortConfig.gbaColors = atoi(eq) != 0;
+        } else if (!strcmp(line, "touch_unstock")) {
+            gPortConfig.touchUnstock = atoi(eq) != 0;
+        } else if (!strcmp(line, "square_dodge")) {
+            gPortConfig.squareDodge = atoi(eq) != 0;
+        } else if (!strcmp(line, "triangle_lr")) {
+            gPortConfig.triangleLR = atoi(eq) != 0;
+        } else if (!strcmp(line, "right_stick")) {
+            gPortConfig.rightStick = atoi(eq) != 0;
         }
     }
 }
@@ -244,14 +301,15 @@ void PortVBlankWait(void) {
         const uint16_t* io = (const uint16_t*)gGbaIo;
         uint32_t n = sSamples ? sSamples : 1;
         PortLog("frame %u: vblankIrq=%u modeUpd=%u DISPCNT=%04X BLDCNT=%04X pal0=%04X keys=%03X | "
-                "avg us: logic=%u render=%u renderWait=%u present=%u maxFrame=%u",
+                "avg us: logic=%u render=%u renderWait=%u present=%u maxFrame=%u scale=%u",
                 frames, (unsigned)gPortVBlankIrqs, (unsigned)gPortModeUpdates, io[0], io[0x50 / 2],
                 ((const uint16_t*)gGbaPltt)[0], PortReadKeys(), (unsigned)(sSumLogic / n),
                 (unsigned)(sSumRender / n), (unsigned)(sSumWait / n), (unsigned)(sSumPresent / n),
-                (unsigned)sMaxFrame);
+                (unsigned)sMaxFrame, (unsigned)gPortScaleUs);
         sSumLogic = sSumPresent = sSumRender = sSumWait = sMaxFrame = sSamples = 0;
     }
 
+    NoticeUpdate();
     PORT_TRACE_EARLY("present: VideoPresent");
     VideoPresent();
     afterPresent = sceKernelGetProcessTimeWide();
@@ -261,6 +319,11 @@ void PortVBlankWait(void) {
     }
     PORT_TRACE_EARLY("present: InputPoll");
     InputPoll();
+    if (InputTakeMenuRequest()) {
+        /* The game waits here, paused, until the menu is closed. */
+        MenuRun();
+        InputPoll();
+    }
     AudioPump();
     FaultPoll();
     if (sSramDirtyFrames > 0 && --sSramDirtyFrames == 0) {

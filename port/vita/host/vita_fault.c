@@ -450,7 +450,8 @@ static int WatchdogThread(SceSize args, void* argp) {
     (void)argp;
     for (;;) {
         sceKernelDelayThread(1000 * 1000);
-        if (gPortVBlankIrqs != last) {
+        /* A paused game (enhancements menu open) is not a freeze. */
+        if (gPortVBlankIrqs != last || gPortMenuOpen) {
             last = gPortVBlankIrqs;
             lastEmulated = sEmulated;
             stalled = 0;

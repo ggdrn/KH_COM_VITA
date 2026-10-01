@@ -6,7 +6,8 @@
  * VRAM at the end of the frame, and hands the snapshot over. Two render
  * threads draw the top and bottom halves of that frame while the game thread
  * already runs the next one; the video module always presents the latest
- * finished frame.
+ * finished frame. With the Scale3x upscaler on, the same two threads then
+ * enlarge one half each (scale3x.c), so the GPU only has to resize it.
  */
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/processmgr.h>
@@ -21,6 +22,20 @@
 
 static PpuFrame sFrames[2] __attribute__((aligned(64)));
 static uint32_t sRgba[2][GBA_SCREEN_HEIGHT * PORT_MAX_SCREEN_WIDTH] __attribute__((aligned(64)));
+/*
+ * Scale3x frames are written straight into the memory of SCALED_SLOTS
+ * textures, so presenting one is binding it: no upload. (An upload of a
+ * texture the GPU drew from recently makes vitaGL reallocate it and copy the
+ * old contents back from GPU memory first, which for this 3x frame took
+ * longer than a whole frame.) A slot is only reused once it is neither the
+ * front frame's nor one of the last two presented, so the GPU is done with it.
+ */
+static uint32_t* sSlotData[SCALED_SLOTS];
+static int sSlotStride;
+static int sScaledSlot[2] = { -1, -1 }; /* slot holding the Scale3x of sRgba[i] */
+static int sShown[2] = { -1, -1 };      /* slots of the last two presented frames */
+static int sTarget;                     /* slot being written */
+static volatile int sPhase;             /* what the slice thread does next: 0 render, 1 scale */
 static int sWidth;
 static int sCapture;          /* snapshot the game thread fills */
 static volatile int sPending; /* snapshot handed to the render threads */
@@ -29,7 +44,31 @@ static volatile int sFront;   /* RGBA buffer ready to present */
 static SceUID sWorkSema[PPU_MAX_SLICES], sDoneSema, sIdleSema, sFrontMutex;
 
 volatile uint32_t gPortRenderUs;
+volatile uint32_t gPortScaleUs; /* Scale3x part of gPortRenderUs */
 volatile uint32_t gPortCaptureWaitUs;
+
+
+/* With the front mutex held: a slot the GPU is not using. */
+static int FreeSlot(void) {
+    int s;
+
+    for (s = 0; s < SCALED_SLOTS; s++) {
+        if (s != sScaledSlot[sFront] && s != sShown[0] && s != sShown[1]) {
+            break;
+        }
+    }
+    return s;
+}
+
+/* Game thread, at startup. */
+void RenderSetScaledSlots(uint32_t* const data[SCALED_SLOTS], int stride) {
+    int s;
+
+    for (s = 0; s < SCALED_SLOTS; s++) {
+        sSlotData[s] = data[s];
+    }
+    sSlotStride = stride;
+}
 
 /* Slice 1: bottom half, on core 2. */
 static int SliceThread(SceSize args, void* argp) {
@@ -37,7 +76,12 @@ static int SliceThread(SceSize args, void* argp) {
     (void)argp;
     for (;;) {
         sceKernelWaitSema(sWorkSema[1], 1, NULL);
-        PpuRenderSlice(&sFrames[sPending], 1, SPLIT_LINE, GBA_SCREEN_HEIGHT);
+        if (sPhase == 0) {
+            PpuRenderSlice(&sFrames[sPending], 1, SPLIT_LINE, GBA_SCREEN_HEIGHT);
+        } else {
+            Scale3xRows(sRgba[sBack], sWidth, GBA_SCREEN_HEIGHT, sSlotData[sTarget], sSlotStride, SPLIT_LINE,
+                        GBA_SCREEN_HEIGHT);
+        }
         sceKernelSignalSema(sDoneSema, 1);
     }
     return 0;
@@ -50,6 +94,7 @@ static int RenderThread(SceSize args, void* argp) {
     for (;;) {
         const PpuFrame* frame;
         SceUInt64 t0;
+        int scale = gPortConfig.upscale == UPSCALE_SCALE3X && sSlotData[0] != NULL;
 
         sceKernelWaitSema(sWorkSema[0], 1, NULL);
         t0 = sceKernelGetProcessTimeWide();
@@ -57,9 +102,28 @@ static int RenderThread(SceSize args, void* argp) {
         sBack = sFront ^ 1;
         PpuSetOutput(sRgba[sBack], sWidth, sWidth);
         PpuPrepareFrame(frame);
+        sPhase = 0;
         sceKernelSignalSema(sWorkSema[1], 1);
         PpuRenderSlice(frame, 0, 0, SPLIT_LINE);
         sceKernelWaitSema(sDoneSema, 1, NULL);
+
+        /* Scale3x reads one line past its half, so it starts once both are drawn. */
+        sScaledSlot[sBack] = -1;
+        if (scale) {
+            SceUInt64 t1 = sceKernelGetProcessTimeWide();
+
+            sceKernelLockMutex(sFrontMutex, 1, NULL);
+            sTarget = FreeSlot();
+            sceKernelUnlockMutex(sFrontMutex, 1);
+            sPhase = 1;
+            sceKernelSignalSema(sWorkSema[1], 1);
+            Scale3xRows(sRgba[sBack], sWidth, GBA_SCREEN_HEIGHT, sSlotData[sTarget], sSlotStride, 0, SPLIT_LINE);
+            sceKernelWaitSema(sDoneSema, 1, NULL);
+            sScaledSlot[sBack] = sTarget;
+            gPortScaleUs = (uint32_t)(sceKernelGetProcessTimeWide() - t1);
+        } else {
+            gPortScaleUs = 0;
+        }
 
         sceKernelLockMutex(sFrontMutex, 1, NULL);
         sFront = sBack;
@@ -160,8 +224,24 @@ void PortCaptureSubmit(void) {
     sceKernelSignalSema(sWorkSema[0], 1);
 }
 
-const uint32_t* RenderLockFront(void) {
+const uint32_t* RenderLockFront(int* slot) {
     sceKernelLockMutex(sFrontMutex, 1, NULL);
+    *slot = -1;
+    if (gPortConfig.upscale != UPSCALE_SCALE3X || sSlotData[0] == NULL) {
+        return sRgba[sFront];
+    }
+    /* Turned on in the paused menu: no new frame comes, so scale this one. */
+    if (sScaledSlot[sFront] < 0) {
+        int s = FreeSlot();
+
+        Scale3xRows(sRgba[sFront], sWidth, GBA_SCREEN_HEIGHT, sSlotData[s], sSlotStride, 0, GBA_SCREEN_HEIGHT);
+        sScaledSlot[sFront] = s;
+    }
+    *slot = sScaledSlot[sFront];
+    if (*slot != sShown[0]) {
+        sShown[1] = sShown[0];
+        sShown[0] = *slot;
+    }
     return sRgba[sFront];
 }
 

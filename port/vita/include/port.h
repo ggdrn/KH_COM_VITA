@@ -48,6 +48,16 @@ void PortCaptureBgStreams(void);
  * columns, as the UI moves things out of view by placing them off screen. */
 void PortUiOverlay(int delta);
 int PortUiOverlayActive(void);
+/* The rear touch pad was held: return the stocked cards to the hand (card
+ * battles; vita_input.c). */
+int PortTakeUnstockRequest(void);
+/* Stocked cards in a card battle: how many, and the span of their centres in
+ * GBA screen pixels; called every frame (vita_notice.c draws the unstock
+ * progress bar under them). */
+void PortSetStockArea(int count, int x0, int x1, int y);
+/* Moogle points picked up on the field: shows them, then the new total
+ * (vita_notice.c). */
+void PortNotifyMooglePoints(unsigned gained, unsigned total);
 /* Player HP display on the field (src/btl/btl2.c), Vita port only. */
 void PortFieldHudOpen(void);
 void PortFieldHudDraw(void);
