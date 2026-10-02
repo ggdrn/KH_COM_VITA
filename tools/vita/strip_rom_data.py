@@ -80,6 +80,8 @@ def reloc_words(data, secs, name):
     for i in range(0, rel["size"], 8):
         r_offset, r_info = struct.unpack_from("<II", data, rel["offset"] + i)
         rtype = r_info & 0xFF
+        if rtype == 40:  # R_ARM_V4BX marks a `bx` (movie codec); it patches nothing
+            continue
         if rtype not in (2, 38):  # R_ARM_ABS32, R_ARM_TARGET1
             sys.exit(f"error: unexpected relocation type {rtype} at {r_offset:08X} in {name}")
         out.add(r_offset)

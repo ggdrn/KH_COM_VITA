@@ -285,6 +285,11 @@ void PortUiOverlay(int delta) {
     }
 }
 
+/* Game thread. */
+void PortSetBgPanel(int bg, int on) {
+    sStreams[bg].panel = on;
+}
+
 /* Game thread: called for each visible line, before its HBlank. */
 void PortCaptureLine(int y) {
     memcpy(sFrames[sCapture].io[y], gGbaIo, PPU_LINE_IO_SIZE);

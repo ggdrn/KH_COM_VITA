@@ -43,6 +43,16 @@ void PortCodeEndWrite(void);
 void PortSetBgStream(int bg, const void* const* map, int width, int height, int worldX, int worldY,
                      int shadowHofs, int shadowVofs);
 void PortCaptureBgStreams(void);
+/* Host side of PortBgPanelMap, every frame: `bg` shows a sliding panel. Its
+ * margins stay empty, and while it spans the original screen (a message box
+ * fully open) it is stretched to the edges of the wide screen (ppu.c). */
+void PortSetBgPanel(int bg, int on);
+/* The map now set on `bg` is a sliding panel (a message window), not a
+ * world map: the margins must not show more of it (widescreen.c). */
+void PortBgPanelMap(int bg, const void* map);
+/* Skip the logos and the title's intro at launch, straight to the title menu
+ * (port menu option). */
+int PortSkipIntro(void);
 /* A 240-pixel UI screen is open (+1) or closed (-1): while any is open the
  * widescreen margins are black bars and sprites stay inside the original 240
  * columns, as the UI moves things out of view by placing them off screen. */

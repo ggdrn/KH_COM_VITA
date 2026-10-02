@@ -134,6 +134,15 @@ static int CaptureFieldStreams(void) {
 
 /* Called right after the VBlank handler flushed scroll registers and VRAM, so
  * the captured camera matches what the next frame shows. */
+/* Maps set as sliding panels (PortBgPanelMap): a message window slides in by
+ * scrolling a 512-pixel map, and its frame sits just off the original screen
+ * when closed, so a stream of it would show the frame in the margins. */
+static const void* sPanelMaps[4];
+
+void PortBgPanelMap(int bg, const void* map) {
+    sPanelMaps[bg] = map;
+}
+
 void PortCaptureBgStreams(void) {
     const u16* hofs[4] = { &gBg0HOfs, &gBg1HOfs, &gBg2HOfs, &gBg3HOfs };
     const u16* vofs[4] = { &gBg0VOfs, &gBg1VOfs, &gBg2VOfs, &gBg3VOfs };
@@ -143,6 +152,8 @@ void PortCaptureBgStreams(void) {
     for (bg = 0; bg < 4; bg++) {
         BgEntry* e;
 
+        PortSetBgPanel(bg, gBgWork != 0 && sPanelMaps[bg] != 0 &&
+                               (const void*)gBgWork->entries[bg].map == sPanelMaps[bg]);
         if (field & (1 << bg)) {
             continue;
         }
@@ -152,7 +163,7 @@ void PortCaptureBgStreams(void) {
         }
         e = &gBgWork->entries[bg];
         /* A one-block-wide map (a 256-pixel panel) would repeat in the margins. */
-        if (e->map == 0 || e->dirty || e->width < 2 || e->height == 0) {
+        if (e->map == 0 || e->dirty || e->width < 2 || e->height == 0 || (const void*)e->map == sPanelMaps[bg]) {
             PortSetBgStream(bg, 0, 0, 0, 0, 0, 0, 0);
             continue;
         }

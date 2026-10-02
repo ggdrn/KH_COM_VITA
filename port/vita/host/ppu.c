@@ -168,6 +168,64 @@ static void RenderTextBgMosaic(PpuCtx* c, int bg, int y) {
 
 static void RenderStreamMargin(PpuCtx* c, int bg, int y, int x0, int x1);
 
+static int Mod8(int a) {
+    return a & 7;
+}
+
+/*
+ * A sliding panel (the message box, PortSetBgPanel). Its map holds nothing
+ * for the margins, so they stay empty. On lines where the panel spans the
+ * original screen (the box fully open: it reaches within a tile of both
+ * edges), it is stretched to the edges of the wide screen, on its own tile
+ * grid: the tile at each end (the box's rounded end, or its open side, which
+ * on the GBA continues past the screen) moves out to the edge, the gap is
+ * filled by repeating the tile next to it, and the rest stays in place, so
+ * the text, drawn with sprites, stays inside the box. The box doesn't stretch
+ * while it slides in or out.
+ */
+static void RenderPanelMargins(PpuCtx* c, int bg) {
+    uint16_t* line = c->bgLine[bg];
+    uint16_t src[GBA_SCREEN_WIDTH];
+    int m = c->xoff, w = GBA_SCREEN_WIDTH;
+    int hofs = IO16(c, 0x10 + bg * 4) & 0x1FF;
+    int g = (8 - (hofs & 7)) & 7;               /* first tile boundary on screen */
+    int lastTile = g + ((w - g) / 8 - 1) * 8;   /* last tile fully on screen */
+    int left = -1, right = -1, gx;
+
+    for (gx = 0; gx < m; gx++) {
+        line[gx] = TRANSPARENT;
+        line[m + w + gx] = TRANSPARENT;
+    }
+    for (gx = 0; gx < w; gx++) {
+        if (line[m + gx] != TRANSPARENT) {
+            if (left < 0) {
+                left = gx;
+            }
+            right = gx;
+        }
+    }
+    if (left < 0 || left > g + 7 || right < w - 9 || lastTile - g < 32) {
+        return;
+    }
+    memcpy(src, line + m, sizeof(src));
+    for (gx = -m; gx < w + m; gx++) {
+        int s;
+
+        if (gx < -m + 8) {
+            s = g + (gx + m);                           /* left end tile */
+        } else if (gx < g + 8) {
+            s = g + 8 + Mod8(gx - (g + 8));             /* next tile, repeated */
+        } else if (gx >= w + m - 8) {
+            s = lastTile + (gx - (w + m - 8));          /* right end tile */
+        } else if (gx >= lastTile) {
+            s = lastTile - 8 + Mod8(gx - (lastTile - 8));
+        } else {
+            s = gx;                                     /* in place */
+        }
+        line[m + gx] = src[s];
+    }
+}
+
 /*
  * Widescreen margins of a text background. A streamed map continues there;
  * a 512-pixel-wide tilemap (battle backgrounds) holds real content past the
@@ -182,7 +240,9 @@ static void RenderTextMargins(PpuCtx* c, int bg, int y, int size) {
     if (c->xoff <= 0) {
         return;
     }
-    if (c->streams[bg].valid) {
+    if (c->streams[bg].panel) {
+        RenderPanelMargins(c, bg);
+    } else if (c->streams[bg].valid) {
         RenderStreamMargin(c, bg, y, 0, c->xoff);
         RenderStreamMargin(c, bg, y, c->xoff + GBA_SCREEN_WIDTH, c->width);
     } else if (!(size & 1)) {

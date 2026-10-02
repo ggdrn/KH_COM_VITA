@@ -74,6 +74,7 @@ static const Item sGameItems[] = {
     { "FIELD HP DISPLAY", "SORA HP ALSO WHILE EXPLORING THE MAP", &gPortConfig.fieldHud },
     { "SAVE BANK", "2 SLOTS EACH: THE SAVE/LOAD SCREENS USE THIS BANK", NULL },
     { "WIDE MENUS", "MENUS STRETCHED TO FILL THE WHOLE SCREEN", &gPortConfig.wideMenus },
+    { "SKIP INTRO", "LAUNCH STRAIGHT INTO THE TITLE MENU", &gPortConfig.skipIntro },
     { "CLOSE", NULL, NULL },
 };
 

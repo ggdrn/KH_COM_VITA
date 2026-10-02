@@ -35,8 +35,9 @@ Early and experimental (see `port/vita/VERSION`).
   - **PICTURE**: *Sharp pixels* (every GBA pixel the same size and crisp at the 3.4x scale) and *GBA colors*
     (colours as on the GBA's screen), both on by default; *Smooth edges* (Scale3x upscaler), off by default.
   - **CONTROLS**: each control addition below can be turned off.
-  - **GAME**: the field HP display, the save bank, and *Wide menus* (menus made for the GBA's screen
-    stretched to fill 16:9 instead of showing bars).
+  - **GAME**: the field HP display, the save bank, *Wide menus* (menus made for the GBA's screen
+    stretched to fill 16:9 instead of showing bars) and *Skip intro* (start at the title menu).
+- **Dialogue boxes fill the 16:9 screen** once open, without distortion.
 - **10 save slots**: 5 banks of the game's 2 slots (`khcom.sav`, `khcom2.sav` … `khcom5.sav`), switched in
   the menu without restarting.
 - **Triangle = L + R** together (stock a card / sleight), without pressing both shoulder buttons.
@@ -87,7 +88,7 @@ Early and experimental (see `port/vita/VERSION`).
 | File | Purpose |
 |---|---|
 | `rom.gba` | Your ROM dump (you copy it) |
-| `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1`, and the menu's choices: `upscale=off\|scale3x`, `sharp`, `gba_colors`, `touch_unstock`, `square_dodge`, `triangle_lr`, `right_stick`, `field_hud`, `wide_menus` (`0\|1`), `save_bank=1-5` |
+| `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1`, and the menu's choices: `upscale=off\|scale3x`, `sharp`, `gba_colors`, `touch_unstock`, `square_dodge`, `triangle_lr`, `right_stick`, `field_hud`, `wide_menus`, `skip_intro` (`0\|1`), `save_bank=1-5` |
 | `khcom.sav` | Save data (the GBA's SRAM), save bank 1; `khcom2.sav` … `khcom5.sav` are banks 2–5 |
 | `log.txt` | Startup trace and a status line with frame timings every second |
 | `log_prev.txt` | The previous run's log (kept when you relaunch after a crash) |

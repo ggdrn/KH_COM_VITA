@@ -103,7 +103,9 @@ def gba_elf_symbols(version, absolute):
     syms = []
     for line in out.splitlines():
         parts = line.split()
-        if len(parts) != 3 or parts[1] in "aA" or parts[2] in absolute or parts[2].startswith("."):
+        # Only global symbols: a linker script cannot name a file-local static.
+        if len(parts) != 3 or not parts[1].isupper() or parts[1] == "A" or parts[2] in absolute \
+                or parts[2].startswith("."):
             continue
         addr = int(parts[0], 16)
         if 0x08000000 <= addr < 0x0A000000:
@@ -322,6 +324,8 @@ def main():
     port_game = sorted(Path("port/vita/game").glob("*.c"))
     port_host = sorted(Path("port/vita/host").glob("*.c"))
     headers = sorted(str(p) for p in Path("include").rglob("*.h"))
+    # As configure.py: game code includes the per-subsystem header folders directly.
+    include_dirs = ["include"] + sorted(str(p) for p in Path("include").iterdir() if p.is_dir() and p.name != "gba")
 
     port_version = Path("port/vita/VERSION").read_text().strip()
     major, minor, patch_level = port_version.split(".")
@@ -333,8 +337,9 @@ def main():
         n.variable("cc", str(sdk_bin / "arm-vita-eabi-gcc"))
         n.variable("as", str(sdk_bin / "arm-vita-eabi-as"))
         n.variable("sdkbin", str(sdk_bin))
-        n.variable("game_cflags", " ".join(GAME_CFLAGS + [vd, "-DPLATFORM_VITA", "-Iinclude",
-                                                         f"-I{gba_build}/gen", "-Iport/vita/include"]))
+        n.variable("game_cflags", " ".join(GAME_CFLAGS + [vd, "-DPLATFORM_VITA"] +
+                                           [f"-I{d}" for d in include_dirs] +
+                                           [f"-I{gba_build}/gen", "-Iport/vita/include"]))
         n.variable("port_cflags", " ".join(PORT_CFLAGS + [vd, "-DPLATFORM_VITA", "-Iport/vita/include"]))
         n.variable("asflags", f"-I . -I include --defsym VERSION_{version.upper()}=1")
         n.newline()

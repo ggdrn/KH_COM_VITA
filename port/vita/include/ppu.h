@@ -14,6 +14,7 @@
 /* A background the game streams from a larger map (engine.c's BgEntry). */
 typedef struct PpuBgStream {
     int valid;
+    int panel; /* a sliding panel (message box): see PortSetBgPanel */
     int width, height; /* in 256x256-pixel blocks */
     int worldX, worldY; /* map position shown at screen (0,0) when the scroll registers equal the shadows */
     int shadowHofs, shadowVofs;

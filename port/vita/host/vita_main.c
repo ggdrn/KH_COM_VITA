@@ -41,6 +41,7 @@ PortConfig gPortConfig = {
     .fieldHud = 1,
     .saveBank = 1,
     .wideMenus = 1,
+    .skipIntro = 0,
 };
 
 static const char* const sUpscaleNames[UPSCALE_COUNT] = { "off", "scale3x" };
@@ -232,6 +233,10 @@ void PortSramWritten(void) {
     sSramDirtyFrames = 10;
 }
 
+int PortSkipIntro(void) {
+    return gPortConfig.skipIntro;
+}
+
 /* Game thread (the menu runs there, with the game paused). */
 void PortSetSaveBank(int bank) {
     if (bank == sSaveBank) {
@@ -292,12 +297,14 @@ void PortSaveConfig(void) {
                    "# save_bank: 1-5, which save file the game's two slots use (khcom.sav, khcom2.sav...)\n"
                    "save_bank=%d\n"
                    "# wide_menus=1: menus (pause, save, deck, status) stretched to the 16:9 screen\n"
-                   "wide_menus=%d\n",
+                   "wide_menus=%d\n"
+                   "# skip_intro=1: launch straight into the title menu (no logos)\n"
+                   "skip_intro=%d\n",
                    displays[gPortConfig.display], gPortConfig.filter == FILTER_NEAREST ? "nearest" : "linear",
                    gPortConfig.swapAB, sUpscaleNames[gPortConfig.upscale], gPortConfig.sharp, gPortConfig.gbaColors,
                    gPortConfig.touchUnstock, gPortConfig.squareDodge, gPortConfig.triangleLR,
                    gPortConfig.rightStick, gPortConfig.fieldHud, gPortConfig.saveBank,
-                   gPortConfig.wideMenus);
+                   gPortConfig.wideMenus, gPortConfig.skipIntro);
     fd = sceIoOpen(CONFIG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
     if (fd >= 0) {
         sceIoWrite(fd, buf, len);
@@ -357,6 +364,8 @@ static void LoadConfig(void) {
             gPortConfig.triangleLR = atoi(eq) != 0;
         } else if (!strcmp(line, "right_stick")) {
             gPortConfig.rightStick = atoi(eq) != 0;
+        } else if (!strcmp(line, "skip_intro")) {
+            gPortConfig.skipIntro = atoi(eq) != 0;
         } else if (!strcmp(line, "wide_menus")) {
             gPortConfig.wideMenus = atoi(eq) != 0;
         } else if (!strcmp(line, "field_hud")) {

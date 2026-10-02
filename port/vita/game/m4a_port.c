@@ -7,6 +7,7 @@
  * them goes through GBA_PTR().
  */
 #include "m4a.h"
+#include "gba/io_reg.h"
 #include "gba/romptr.h"
 #include "port.h"
 

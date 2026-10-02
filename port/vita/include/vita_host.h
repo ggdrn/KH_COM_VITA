@@ -40,6 +40,7 @@ typedef struct PortConfig {
     int fieldHud;      /* HP display while exploring the map (src/btl/btl2.c) */
     int saveBank;      /* 1..SAVE_BANKS: which save file holds the game's two slots */
     int wideMenus;     /* pause / save menus widened to the whole screen */
+    int skipIntro;     /* launch straight into the title menu */
 } PortConfig;
 
 /* The game has two save slots; the port keeps SAVE_BANKS files of them, so

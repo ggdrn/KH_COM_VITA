@@ -164,7 +164,8 @@ static void LogBiosAccess(const char* what, const void* src, const void* dst) {
 
 /* BIOS ------------------------------------------------------------------------ */
 
-void CpuSet(void* src, void* dst, u32 ctrl) {
+void CpuSet(const void* csrc, void* dst, u32 ctrl) {
+    void* src = (void*)csrc;
     u32 count = ctrl & 0x1FFFFF;
     int fixed = (ctrl & CPU_SET_SRC_FIXED) != 0;
 
