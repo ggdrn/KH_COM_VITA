@@ -22,7 +22,8 @@
 
 #define LINE_MAX (PORT_MAX_SCREEN_WIDTH * 3)
 
-void Scale3xRows(const uint32_t* src, int w, int h, uint32_t* dst, int dstStride, int y0, int y1) {
+void Scale3xRows(const uint32_t* src, const uint8_t* mask, int target, int w, int h, uint32_t* dst, int dstStride,
+                 int y0, int y1) {
     uint32_t lines[3 * LINE_MAX] __attribute__((aligned(64)));
     int dw = w * 3;
     int x, y;
@@ -40,7 +41,7 @@ void Scale3xRows(const uint32_t* src, int w, int h, uint32_t* dst, int dstStride
             int xr = x < w - 1 ? x + 1 : x;
             uint32_t B = up[x], D = mid[xl], E = mid[x], F = mid[xr], H = dn[x];
 
-            if (B == H || D == F) {
+            if (B == H || D == F || UPSCALE_SKIP(mask, target, y * w + x)) {
                 o0[0] = o0[1] = o0[2] = E;
                 o1[0] = o1[1] = o1[2] = E;
                 o2[0] = o2[1] = o2[2] = E;

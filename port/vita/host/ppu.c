@@ -52,6 +52,8 @@ typedef struct PpuCtx {
     int objCount;
     const PpuBgStream* streams;
     int clipObjs;
+    int clipY0, clipY1;
+    uint8_t* mask;
     int sceneMargins;
     int32_t affX[2], affY[2];
     uint32_t latchX[2], latchY[2];
@@ -74,6 +76,11 @@ typedef struct PpuCtx {
 static int sWidth = GBA_SCREEN_WIDTH;
 static uint32_t* sOut;
 static int sPitch;
+static uint8_t* sMask; /* per pixel: 1 where a sprite is in front (PpuSetMask) */
+
+void PpuSetMask(uint8_t* mask) {
+    sMask = mask;
+}
 
 void PpuSetOutput(uint32_t* out, int width, int pitch) {
     if (width > MAX_W) {
@@ -180,8 +187,8 @@ static int Mod8(int a) {
  * grid: the tile at each end (the box's rounded end, or its open side, which
  * on the GBA continues past the screen) moves out to the edge, the gap is
  * filled by repeating the tile next to it, and the rest stays in place, so
- * the text, drawn with sprites, stays inside the box. The box doesn't stretch
- * while it slides in or out.
+ * the text, drawn with sprites, stays inside the box. The box doesn't
+ * stretch while it slides in or out.
  */
 static void RenderPanelMargins(PpuCtx* c, int bg) {
     uint16_t* line = c->bgLine[bg];
@@ -227,6 +234,36 @@ static void RenderPanelMargins(PpuCtx* c, int bg) {
 }
 
 /*
+ * A UI screen split for 16:9 (PortBgSplit): what is left of column `split`
+ * moves into the left margin, what is right of it into the right one, each
+ * at its own size; the gap they open in the middle repeats the column on each
+ * side of the split (so a line running across continues, and space between
+ * boxes stays empty). The game moves the sprites over each side the same way.
+ */
+static void RenderSplitMargins(PpuCtx* c, int bg, int split) {
+    uint16_t* line = c->bgLine[bg];
+    uint16_t src[GBA_SCREEN_WIDTH];
+    int m = c->xoff, w = GBA_SCREEN_WIDTH;
+    int gx;
+
+    memcpy(src, line + m, sizeof(src));
+    for (gx = -m; gx < w + m; gx++) {
+        int s;
+
+        if (gx < split - m) {
+            s = gx + m;
+        } else if (gx < split) {
+            s = split - 1;
+        } else if (gx < split + m) {
+            s = split;
+        } else {
+            s = gx - m;
+        }
+        line[m + gx] = s >= 0 && s < w ? src[s] : TRANSPARENT;
+    }
+}
+
+/*
  * Widescreen margins of a text background. A streamed map continues there;
  * a 512-pixel-wide tilemap (battle backgrounds) holds real content past the
  * original screen and is left as drawn; anything else is a 256-pixel map whose
@@ -240,7 +277,21 @@ static void RenderTextMargins(PpuCtx* c, int bg, int y, int size) {
     if (c->xoff <= 0) {
         return;
     }
-    if (c->streams[bg].panel) {
+    if (c->streams[bg].split > 0) {
+        RenderSplitMargins(c, bg, c->streams[bg].split);
+    } else if (c->streams[bg].keepMargins) {
+        /* A UI layer moved into a margin: that side keeps the map as drawn. */
+        if (!(c->streams[bg].keepMargins & PORT_MARGIN_LEFT)) {
+            for (x = 0; x < c->xoff; x++) {
+                line[x] = TRANSPARENT;
+            }
+        }
+        if (!(c->streams[bg].keepMargins & PORT_MARGIN_RIGHT)) {
+            for (x = c->xoff + GBA_SCREEN_WIDTH; x < c->width; x++) {
+                line[x] = TRANSPARENT;
+            }
+        }
+    } else if (c->streams[bg].panel) {
         RenderPanelMargins(c, bg);
     } else if (c->streams[bg].valid) {
         RenderStreamMargin(c, bg, y, 0, c->xoff);
@@ -542,9 +593,11 @@ static int RenderObjs(PpuCtx* c, int y) {
     int mh = ((mos >> 8) & 0xF) + 1;
     int mv = ((mos >> 12) & 0xF) + 1;
     int anySemi = 0;
-    /* Columns sprites may cover: all, or the original 240 under a UI overlay. */
-    int lo = c->clipObjs ? c->xoff : 0;
-    int hi = c->clipObjs ? c->xoff + GBA_SCREEN_WIDTH : c->width;
+    /* Columns sprites may cover: all, or the original 240 under a UI overlay
+     * (or on its clipped rows, PortUiClipRows). */
+    int clip = c->clipObjs || (y >= c->clipY0 && y < c->clipY1);
+    int lo = clip ? c->xoff : 0;
+    int hi = clip ? c->xoff + GBA_SCREEN_WIDTH : c->width;
     int i;
 
     for (i = 0; i < c->width; i++) {
@@ -678,29 +731,6 @@ static int RenderObjs(PpuCtx* c, int y) {
 
 /* Windows ------------------------------------------------------------------------ */
 
-static int InWindowX(int gx, uint16_t winh) {
-    int x1 = winh >> 8;
-    int x2 = winh & 0xFF;
-
-    if (x2 > GBA_SCREEN_WIDTH) {
-        x2 = GBA_SCREEN_WIDTH;
-    }
-    /* An empty window (some effects shape a window line by line and leave it
-     * empty on the lines they don't cover): nothing is inside, the margins
-     * included. Before, x1 = x2 = 0 counted as touching the left edge and
-     * let the margins skip the darkening the rest of the line got. */
-    if (x1 == x2) {
-        return 0;
-    }
-    /* Windows that touch a screen edge extend into the widescreen margins. */
-    if (x1 < x2) {
-        int left = x1 == 0 ? -0x10000 : x1;
-        int right = x2 >= GBA_SCREEN_WIDTH ? 0x10000 : x2;
-        return gx >= left && gx < right;
-    }
-    return gx >= x1 || gx < x2;
-}
-
 static int InWindowY(int y, uint16_t winv) {
     int y1 = winv >> 8;
     int y2 = winv & 0xFF;
@@ -714,13 +744,50 @@ static int InWindowY(int y, uint16_t winv) {
     return y >= y1 || y < y2;
 }
 
+/* The frame columns [*a0, *a1) and [*b0, *b1) a window covers on this line
+ * (as up to two ranges, since a window can wrap). An empty window covers
+ * nothing; one that touches a screen edge extends into the widescreen
+ * margins on that side. */
+static void WindowRanges(const PpuCtx* c, uint16_t winh, int* a0, int* a1, int* b0, int* b1) {
+    int x1 = winh >> 8, x2 = winh & 0xFF;
+
+    *a0 = *a1 = *b0 = *b1 = 0;
+    if (x2 > GBA_SCREEN_WIDTH) {
+        x2 = GBA_SCREEN_WIDTH;
+    }
+    if (x1 == x2) {
+        return;
+    }
+    if (x1 < x2) {
+        *a0 = x1 == 0 ? 0 : x1 + c->xoff;
+        *a1 = x2 >= GBA_SCREEN_WIDTH ? c->width : x2 + c->xoff;
+    } else {
+        *a0 = x1 + c->xoff;
+        *a1 = c->width;
+        *b0 = 0;
+        *b1 = x2 + c->xoff;
+    }
+    if (*a1 > c->width) *a1 = c->width;
+    if (*b1 > c->width) *b1 = c->width;
+}
+
+static void FillMask(uint8_t* mask, int x0, int x1, uint8_t v, const uint8_t* claimed) {
+    int x;
+
+    for (x = x0; x < x1; x++) {
+        if (!claimed[x]) {
+            mask[x] = v;
+        }
+    }
+}
+
 /* Returns 0 when no window is active (every layer and effect enabled). */
 static int BuildWindowMask(PpuCtx* c, int y) {
     uint16_t dispcnt = IO16(c, 0x00);
     uint16_t winin = IO16(c, 0x48);
     uint16_t winout = IO16(c, 0x4A);
-    int w0, w1, ow, x;
-    uint16_t w0h, w1h;
+    uint8_t claimed[MAX_W];
+    int w0, w1, ow, x, a0, a1, b0, b1;
 
     if (!(dispcnt & 0xE000)) {
         return 0;
@@ -728,18 +795,26 @@ static int BuildWindowMask(PpuCtx* c, int y) {
     w0 = (dispcnt & 0x2000) && InWindowY(y, IO16(c, 0x44));
     w1 = (dispcnt & 0x4000) && InWindowY(y, IO16(c, 0x46));
     ow = (dispcnt & 0x8000) != 0;
-    w0h = IO16(c, 0x40);
-    w1h = IO16(c, 0x42);
+
+    /* Outside every window first, then the object window, window 1 and
+     * window 0 on top (the GBA's priority), each only where nothing higher
+     * has claimed the pixel. */
+    memset(claimed, 0, c->width);
+    if (w0) {
+        WindowRanges(c, IO16(c, 0x40), &a0, &a1, &b0, &b1);
+        for (x = a0; x < a1; x++) { c->winMask[x] = winin & 0x3F; claimed[x] = 1; }
+        for (x = b0; x < b1; x++) { c->winMask[x] = winin & 0x3F; claimed[x] = 1; }
+    }
+    if (w1) {
+        WindowRanges(c, IO16(c, 0x42), &a0, &a1, &b0, &b1);
+        FillMask(c->winMask, a0, a1, (winin >> 8) & 0x3F, claimed);
+        FillMask(c->winMask, b0, b1, (winin >> 8) & 0x3F, claimed);
+        for (x = a0; x < a1; x++) claimed[x] = 1;
+        for (x = b0; x < b1; x++) claimed[x] = 1;
+    }
     for (x = 0; x < c->width; x++) {
-        int gx = x - c->xoff;
-        if (w0 && InWindowX(gx, w0h)) {
-            c->winMask[x] = winin & 0x3F;
-        } else if (w1 && InWindowX(gx, w1h)) {
-            c->winMask[x] = (winin >> 8) & 0x3F;
-        } else if (ow && c->objWin[x]) {
-            c->winMask[x] = (winout >> 8) & 0x3F;
-        } else {
-            c->winMask[x] = winout & 0x3F;
+        if (!claimed[x]) {
+            c->winMask[x] = (ow && c->objWin[x]) ? (winout >> 8) & 0x3F : winout & 0x3F;
         }
     }
     return 1;
@@ -968,6 +1043,21 @@ static void RenderLine(PpuCtx* c, int y) {
         for (x = 0; x < c->width; x++) {
             out[x] = ToRgba(line[x]);
         }
+        if (c->mask != NULL) {
+            /* A sprite is in front where no opaque BG has a higher priority. */
+            uint8_t* m = c->mask + y * c->pitch;
+
+            for (x = 0; x < c->width; x++) {
+                int front = objOn && c->objPrio[x] < 4;
+
+                for (bg = 0; front && bg < 4; bg++) {
+                    if (bgEnabled[bg] && bgPrio[bg] < c->objPrio[x] && c->bgLine[bg][x] != TRANSPARENT) {
+                        front = 0;
+                    }
+                }
+                m[x] = (uint8_t)front;
+            }
+        }
         HideUnseenBackdrop(c, out, bgEnabled, objOn);
         return;
     }
@@ -993,6 +1083,9 @@ static void RenderLine(PpuCtx* c, int y) {
         if (topLayer == LAYER_NONE) {
             top = backdrop;
             topLayer = LAYER_BD;
+        }
+        if (c->mask != NULL) {
+            c->mask[y * c->pitch + x] = topLayer == LAYER_OBJ;
         }
         if (belowLayer == LAYER_NONE) {
             below = backdrop;
@@ -1031,10 +1124,35 @@ static PpuCtx sCtx[PPU_MAX_SLICES];
 static PpuObj sObjs[128];
 static int sObjCount;
 
+/* The affine reference points at the start of each line, before its own
+ * latch: they carry over from line to line, and the lines are drawn in
+ * chunks by several threads, in any order. */
+typedef struct AffineState {
+    int32_t affX[2], affY[2];
+    uint32_t latchX[2], latchY[2];
+} AffineState;
+
+static AffineState sAffine[GBA_SCREEN_HEIGHT];
+
 void PpuPrepareFrame(const PpuFrame* frame) {
     int bitmapMode = (*(const uint16_t*)&frame->io[0][0] & 7) >= 3;
+    PpuCtx* c = &sCtx[0];
+    int y;
 
     sObjCount = DecodeObjs(frame->oam, bitmapMode, sObjs);
+    for (y = 0; y < GBA_SCREEN_HEIGHT; y++) {
+        AffineState* a = &sAffine[y];
+
+        if (y > 0) {
+            memcpy(a->affX, c->affX, sizeof(a->affX));
+            memcpy(a->affY, c->affY, sizeof(a->affY));
+            memcpy(a->latchX, c->latchX, sizeof(a->latchX));
+            memcpy(a->latchY, c->latchY, sizeof(a->latchY));
+        }
+        c->io = frame->io[y];
+        LatchAffine(c, y == 0);
+        AdvanceAffine(c);
+    }
 }
 
 void PpuRenderSlice(const PpuFrame* frame, int slice, int y0, int y1) {
@@ -1045,19 +1163,24 @@ void PpuRenderSlice(const PpuFrame* frame, int slice, int y0, int y1) {
     c->vram = frame->vram;
     c->out = sOut;
     c->pitch = sPitch;
+    c->mask = sMask;
     c->width = sWidth;
     c->xoff = (sWidth - GBA_SCREEN_WIDTH) / 2;
     c->objs = sObjs;
     c->objCount = sObjCount;
     c->streams = frame->streams;
     c->clipObjs = frame->clipObjs;
+    c->clipY0 = frame->clipY0;
+    c->clipY1 = frame->clipY1;
     c->sceneMargins = frame->sceneMargins;
 
-    /* Bring the affine reference points to line y0 without drawing. */
-    for (y = 0; y < y0; y++) {
-        c->io = frame->io[y];
-        LatchAffine(c, y == 0);
-        AdvanceAffine(c);
+    if (y0 > 0) {
+        const AffineState* a = &sAffine[y0];
+
+        memcpy(c->affX, a->affX, sizeof(c->affX));
+        memcpy(c->affY, a->affY, sizeof(c->affY));
+        memcpy(c->latchX, a->latchX, sizeof(c->latchX));
+        memcpy(c->latchY, a->latchY, sizeof(c->latchY));
     }
     for (y = y0; y < y1; y++) {
         c->io = frame->io[y];

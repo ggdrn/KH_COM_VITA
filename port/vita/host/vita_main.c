@@ -23,6 +23,13 @@ unsigned int sceUserMainThreadStackSize = 1 * 1024 * 1024;
 int _newlib_heap_size_user = 128 * 1024 * 1024;
 
 #define DATA_DIR "ux0:data/khcom"
+/* The European version keeps its own saves (they also hold the language):
+ * khcom_eu.sav, khcom_eu2.sav... */
+#ifdef VERSION_EU
+#define SAVE_NAME "khcom_eu"
+#else
+#define SAVE_NAME "khcom"
+#endif
 #define LOG_PATH DATA_DIR "/log.txt"
 #define CONFIG_PATH DATA_DIR "/config.ini"
 
@@ -32,9 +39,13 @@ PortConfig gPortConfig = {
     .swapAB = 0,
     /* Picture: crisp pixels and GBA colours; the upscaler is opt-in. */
     .upscale = UPSCALE_OFF,
+    /* MMPX on the whole picture costs ~12 ms a frame on the Vita's CPU (the
+     * scenery's texture keeps it out of its fast paths): sprites only. */
+    .upscaleTarget = UPSCALE_TARGET_SPRITES,
     .sharp = 1,
     .gbaColors = 1,
-    .touchUnstock = 1,
+    .touchUnstock = TOUCH_UNSTOCK_HOLD,
+    .unstockHold = 1,
     .squareDodge = 1,
     .triangleLR = 1,
     .rightStick = 1,
@@ -44,7 +55,10 @@ PortConfig gPortConfig = {
     .skipIntro = 0,
 };
 
-static const char* const sUpscaleNames[UPSCALE_COUNT] = { "off", "scale3x" };
+static const char* const sUpscaleNames[UPSCALE_COUNT] = { "off", "scale2x", "scale3x", "mmpx" };
+static const char* const sTargetNames[UPSCALE_TARGET_COUNT] = { "all", "sprites", "scenery" };
+static const char* const sTouchNames[TOUCH_UNSTOCK_COUNT] = { "off", "hold", "double_tap", "both" };
+static const char* const sHoldNames[UNSTOCK_HOLD_STEPS] = { "0.5", "1", "1.5", "2" };
 
 static SceUID sLogFd = -1;
 int gPortTraceFrames = 3;
@@ -122,9 +136,9 @@ static void LoadSram(void) {
 
     sSaveBank = gPortConfig.saveBank;
     if (sSaveBank <= 1) {
-        snprintf(sSavePath, sizeof(sSavePath), "%s/khcom.sav", DATA_DIR);
+        snprintf(sSavePath, sizeof(sSavePath), "%s/%s.sav", DATA_DIR, SAVE_NAME);
     } else {
-        snprintf(sSavePath, sizeof(sSavePath), "%s/khcom%d.sav", DATA_DIR, sSaveBank);
+        snprintf(sSavePath, sizeof(sSavePath), "%s/%s%d.sav", DATA_DIR, SAVE_NAME, sSaveBank);
     }
     snprintf(sSaveTmpPath, sizeof(sSaveTmpPath), "%s.tmp", sSavePath);
 
@@ -276,33 +290,40 @@ void PortSaveConfig(void) {
                    "# swap_ab=1 maps Circle to GBA A and Cross to GBA B\n"
                    "swap_ab=%d\n"
                    "# Picture enhancements (also in the Start + L + R menu):\n"
-                   "# upscale: scale3x or off (smooths the edges of the pixel art)\n"
+                   "# upscale: mmpx (sharper, keeps outlines), scale2x or scale3x (rounder) or off\n"
                    "upscale=%s\n"
+                   "# upscale_target: all, sprites or scenery (what upscale smooths)\n"
+                   "upscale_target=%s\n"
                    "# sharp=1: crisp, even pixels when upscale=off\n"
                    "sharp=%d\n"
                    "# gba_colors=1: colours as on the GBA's screen\n"
                    "gba_colors=%d\n"
                    "# Control additions (also in the Start + L + R menu), 1 = on:\n"
-                   "# rear touch held 1 s returns the stocked cards to the hand\n"
-                   "touch_unstock=%d\n"
+                   "# touch_unstock: off, hold, double_tap or both: the rear touch returns the\n"
+                   "# stocked cards to the hand when held, or tapped twice within half a second\n"
+                   "touch_unstock=%s\n"
+                   "# unstock_hold: 0.5, 1, 1.5 or 2: seconds to hold the rear touch / right stick down\n"
+                   "unstock_hold=%s\n"
                    "# Square: dodge roll\n"
                    "square_dodge=%d\n"
                    "# Triangle: L + R (stock a card / sleight)\n"
                    "triangle_lr=%d\n"
-                   "# right stick: left/right = L/R, up = L + R, down held 1 s = unstock\n"
+                   "# right stick: left/right = L/R, up = L + R, down held = unstock\n"
                    "right_stick=%d\n"
                    "# Game options (also in the Start + L + R menu):\n"
                    "# field_hud=1: HP display while exploring the map\n"
                    "field_hud=%d\n"
                    "# save_bank: 1-5, which save file the game's two slots use (khcom.sav, khcom2.sav...)\n"
                    "save_bank=%d\n"
-                   "# wide_menus=1: menus (pause, save, deck, status) stretched to the 16:9 screen\n"
+                   "# wide_menus=1: menu screens (deck, world map, map/world cards, status, journal) stretched to 16:9\n"
                    "wide_menus=%d\n"
                    "# skip_intro=1: launch straight into the title menu (no logos)\n"
                    "skip_intro=%d\n",
                    displays[gPortConfig.display], gPortConfig.filter == FILTER_NEAREST ? "nearest" : "linear",
-                   gPortConfig.swapAB, sUpscaleNames[gPortConfig.upscale], gPortConfig.sharp, gPortConfig.gbaColors,
-                   gPortConfig.touchUnstock, gPortConfig.squareDodge, gPortConfig.triangleLR,
+                   gPortConfig.swapAB, sUpscaleNames[gPortConfig.upscale],
+                   sTargetNames[gPortConfig.upscaleTarget], gPortConfig.sharp, gPortConfig.gbaColors,
+                   sTouchNames[gPortConfig.touchUnstock], sHoldNames[gPortConfig.unstockHold],
+                   gPortConfig.squareDodge, gPortConfig.triangleLR,
                    gPortConfig.rightStick, gPortConfig.fieldHud, gPortConfig.saveBank,
                    gPortConfig.wideMenus, gPortConfig.skipIntro);
     fd = sceIoOpen(CONFIG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
@@ -352,12 +373,30 @@ static void LoadConfig(void) {
                     gPortConfig.upscale = i;
                 }
             }
+        } else if (!strcmp(line, "upscale_target")) {
+            for (i = 0; i < UPSCALE_TARGET_COUNT; i++) {
+                if (!strcmp(eq, sTargetNames[i])) {
+                    gPortConfig.upscaleTarget = i;
+                }
+            }
         } else if (!strcmp(line, "sharp")) {
             gPortConfig.sharp = atoi(eq) != 0;
         } else if (!strcmp(line, "gba_colors")) {
             gPortConfig.gbaColors = atoi(eq) != 0;
         } else if (!strcmp(line, "touch_unstock")) {
-            gPortConfig.touchUnstock = atoi(eq) != 0;
+            /* Also 0 / 1 (off / hold), as before there were more ways. */
+            gPortConfig.touchUnstock = atoi(eq) != 0 ? TOUCH_UNSTOCK_HOLD : TOUCH_UNSTOCK_OFF;
+            for (i = 0; i < TOUCH_UNSTOCK_COUNT; i++) {
+                if (!strcmp(eq, sTouchNames[i])) {
+                    gPortConfig.touchUnstock = i;
+                }
+            }
+        } else if (!strcmp(line, "unstock_hold")) {
+            for (i = 0; i < UNSTOCK_HOLD_STEPS; i++) {
+                if (!strcmp(eq, sHoldNames[i])) {
+                    gPortConfig.unstockHold = i;
+                }
+            }
         } else if (!strcmp(line, "square_dodge")) {
             gPortConfig.squareDodge = atoi(eq) != 0;
         } else if (!strcmp(line, "triangle_lr")) {
@@ -443,7 +482,11 @@ int main(void) {
     /* Keep the previous run's log: relaunching after a crash would overwrite it. */
     sceIoRemove(DATA_DIR "/log_prev.txt");
     sceIoRename(LOG_PATH, DATA_DIR "/log_prev.txt");
+#ifdef VERSION_EU
+    PortLog("KH:COM Vita port v%s starting (Europe)", PORT_VERSION);
+#else
     PortLog("KH:COM Vita port v%s starting", PORT_VERSION);
+#endif
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
     scePowerSetGpuClockFrequency(222);

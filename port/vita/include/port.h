@@ -47,6 +47,15 @@ void PortCaptureBgStreams(void);
  * margins stay empty, and while it spans the original screen (a message box
  * fully open) it is stretched to the edges of the wide screen (ppu.c). */
 void PortSetBgPanel(int bg, int on);
+/* A UI layer the game moved into a margin (16:9 menu layouts): that margin
+ * shows the layer's map as drawn instead of staying empty (0 = default). */
+#define PORT_MARGIN_LEFT 1
+#define PORT_MARGIN_RIGHT 2
+void PortBgMargins(int bg, int sides);
+/* A UI screen laid out for 16:9 by splitting it at column `split` (0 turns
+ * it off): the layer's left part moves into the left margin, its right part
+ * into the right one (ppu.c); the game moves its sprites to match. */
+void PortBgSplit(int bg, int split);
 /* The map now set on `bg` is a sliding panel (a message window), not a
  * world map: the margins must not show more of it (widescreen.c). */
 void PortBgPanelMap(int bg, const void* map);
@@ -58,6 +67,10 @@ int PortSkipIntro(void);
  * columns, as the UI moves things out of view by placing them off screen. */
 void PortUiOverlay(int delta);
 int PortUiOverlayActive(void);
+/* A UI screen laid out for 16:9 that still places things off screen to hide
+ * them on rows [y0, y1) (the door's card tray: cards of other pages): there,
+ * sprites stay inside the original 240 columns; y0 = y1 turns it off. */
+void PortUiClipRows(int y0, int y1);
 /* A menu over the field opened (+1) or closed (-1). While one is open, it is
  * stretched to the whole 16:9 screen (wide_menus, vita_video.c). */
 void PortWideMenu(int delta);
@@ -100,6 +113,31 @@ extern uint8_t gPortDodgePressed;
 void PortSramWritten(void);
 /* Game side (src/save.c): checks and repairs SRAM after a save bank swap. */
 void PortCheckSaveBank(void);
+/* Boss practice (port/vita/game/boss_practice.c), for the port menu: the
+ * bosses of Sora's story, each with whether this file got past it. */
+enum { PORT_BOSS_OK, PORT_BOSS_NOT_FIELD, PORT_BOSS_RIKU };
+int PortBossCount(void);
+int PortBossInfo(int i, const char** name, const char** place);
+/* Listed under the TUTORIALS tab instead of BOSSES. */
+int PortBossIsTutorial(int i);
+/* PORT_BOSS_OK while Sora walks a world's rooms, the only place a fight can
+ * start from. */
+int PortBossAvailable(void);
+/* level: 0 for the original strength, else the enemy level (1 to Sora's). */
+void PortBossRequest(int i, int level);
+int PortBossSoraLevel(void);
+/* Game side hooks: the field's main loop (nonzero: a fight was requested),
+ * the battle start (nonzero: started), the battle mode's set-up, the
+ * battle's end (nonzero: handled, back to the field), and the battle mode's
+ * exit. */
+int PortBossFieldTick(void);
+int PortBossStart(void);
+void PortBossBattleInit(void);
+int PortBossActive(void);
+int PortBossEnd(int won);
+void PortBossBattleExit(void);
+/* Every enemy's set-up (InitEnemyBtlObj): HP and attack for the chosen level. */
+void PortBossScaleEnemy(short* maxHp, short* attack);
 /* Restarts the application (BIOS SoftReset). */
 void PortSoftReset(void) __attribute__((noreturn));
 /* Debug log (printf-style) to ux0:data/khcom/log.txt. */

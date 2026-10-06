@@ -1,10 +1,30 @@
 # Changelog — KH:COM Vita
 
-A native PS Vita port of *Kingdom Hearts: Chain of Memories* (GBA, USA), built on the community
+A native PS Vita port of *Kingdom Hearts: Chain of Memories* (GBA, USA and Europe), built on the community
 decompilation ([Pheenoh/khcom](https://github.com/Pheenoh/khcom)). The game's code runs natively on the
 Vita; only the GBA's picture processor is reproduced in software.
 
 Newest version first.
+
+---
+
+## v0.08.00 — European ROM, boss practice, new upscalers
+
+### New
+- **European ROM** (English, French, German, Italian, Spanish) in the same VPK, detected from the ROM;
+  separate saves (`khcom_eu*.sav`).
+- **Boss practice** (BOSSES tab): refight beaten bosses at the original strength or a chosen enemy level
+  up to Sora's; no XP or rewards, back to where you were.
+- **Tutorial replay** (TUTORIALS tab).
+- **Scale2x and MMPX** smooth edges, for everything, sprites only or scenery only.
+- **Clear stocked cards:** hold time 0.5–2 s, or double tap on the rear touch pad.
+- **16:9 layouts** for the pause, save, door and level-up screens; more wide menus.
+
+### Fixed
+- Pause menu crash after the first Riku fight.
+- Leon's tutorial softlocks.
+- Heavy-scene slowdown (rendering and upscaling on three cores).
+- The Start + L + R chord no longer opens the game's pause menu.
 
 ---
 

@@ -31,9 +31,14 @@ def notes(core):
     return out
 
 
-def module_segments(info, module=b"khcom.elf"):
+def module_segments(info):
     """(runtime base, size) of the module's segments, from MODULE_INFO."""
-    k = info.find(module)
+    # The module is named after the ELF it was made from: khcom.elf, or
+    # khcom.stripped.elf since the ROM data is stripped after linking.
+    for module in (b"khcom.stripped.elf", b"khcom.elf", b"khcom"):
+        k = info.find(module)
+        if k >= 40:
+            break
     words = struct.unpack_from("<60I", info, k - 40)
     segs = []
     for i in range(len(words) - 3):

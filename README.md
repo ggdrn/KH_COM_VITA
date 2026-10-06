@@ -9,7 +9,8 @@ an emulator**: the game logic runs natively, and only the GBA's picture processo
 
 > **This repository contains no game data and no decompiled game code.**
 > It only holds the Vita platform layer, the build tools, and a patch of the port's changes to the public
-> decompilation. To build it you need your **own legally dumped ROM** of the game (USA version).
+> decompilation. To build it you need your **own legally dumped ROM** of the game (USA; the European ROM is
+> optional).
 
 ## Status
 
@@ -31,12 +32,18 @@ Early and experimental (see `port/vita/VERSION`).
   scrolling map in video memory, so the extra columns are drawn straight from the game's full map: the
   scenery really continues past the original edges, and sprites stay visible there. `fit` (original 3:2 with
   side bars) and `stretch` modes are also available.
-- **Port menu (Start + L + R)**, with three tabs (switch with L / R), saved to `config.ini`:
+- **USA and European ROMs** (the European one has English, French, German, Italian and Spanish) in the same
+  VPK: the port detects the ROM and runs the matching version. Each version keeps its own saves.
+- **Port menu (Start + L + R)**, with five tabs (switch with L / R), saved to `config.ini`:
   - **PICTURE**: *Sharp pixels* (every GBA pixel the same size and crisp at the 3.4x scale) and *GBA colors*
-    (colours as on the GBA's screen), both on by default; *Smooth edges* (Scale3x upscaler), off by default.
+    (colours as on the GBA's screen), both on by default; *Smooth edges* (Scale2x, Scale3x or MMPX), off by
+    default, applied to everything, sprites only or scenery only.
   - **CONTROLS**: each control addition below can be turned off.
   - **GAME**: the field HP display, the save bank, *Wide menus* (menus made for the GBA's screen
     stretched to fill 16:9 instead of showing bars) and *Skip intro* (start at the title menu).
+  - **BOSSES**: refight any boss of Sora's story already beaten, at its original strength or at an enemy
+    level up to Sora's; no XP or rewards, and you return to where you were (won or lost).
+  - **TUTORIALS**: replay the two battle tutorials.
 - **Dialogue boxes fill the 16:9 screen** once open, without distortion.
 - **10 save slots**: 5 banks of the game's 2 slots (`khcom.sav`, `khcom2.sav` … `khcom5.sav`), switched in
   the menu without restarting.
@@ -45,7 +52,8 @@ Early and experimental (see `port/vita/VERSION`).
   GBA this needs a double tap on the D-pad. Works for Sora and Riku.
 - **Right stick for the cards**: left / right = L / R (previous / next card), up = L + R (stock / sleight).
 - **Return the stocked cards to the hand** (Sora), which the GBA version can't do: hold the rear touch pad or
-  the right stick down for 1 s; a bar under the stocked cards fills up meanwhile. The cards go back to their
+  the right stick down (0.5–2 s, 1 s by default), or tap the rear touch pad twice; a bar under the stocked
+  cards fills up while holding. The cards go back to their
   places in the deck and the cursor stays where it was.
 - **Moogle points notice**: picking up moogle points on the field shows the amount in the bottom-right
   corner, then your total.
@@ -61,8 +69,8 @@ Early and experimental (see `port/vita/VERSION`).
 | L / R | L / R |
 | Triangle | L + R (stock / sleight) |
 | Square | Dodge roll |
-| Right stick | Left / right: L / R; up: L + R; down held 1 s: unstock the cards |
-| Rear touch pad, held 1 s | Unstock the cards |
+| Right stick | Left / right: L / R; up: L + R; down held: unstock the cards |
+| Rear touch pad, held or tapped twice | Unstock the cards |
 | Start / Select | Start / Select |
 | Start + L + R | Port menu |
 
@@ -72,15 +80,17 @@ Early and experimental (see `port/vita/VERSION`).
    console following
    [this guide](https://samilops2.gitbook.io/vita-troubleshooting-guide/shader-compiler/extract-libshacccg.suprx);
    it must end up at `ur0:data/libshacccg.suprx`. It is Sony software and is not distributed here.
-2. Copy the built `khcom_us_vX.XX.XX.vpk` to the Vita (e.g. with VitaShell over FTP/USB) and install it.
+2. Copy the built `khcom_vX.XX.XX.vpk` to the Vita (e.g. with VitaShell over FTP/USB) and install it.
 3. **Recommended: the [kubridge](https://github.com/bythos14/kubridge/releases) kernel plugin**
    (`ur0:tai/kubridge.skprx` under `*KERNEL` in `ur0:tai/config.txt`, then reboot). With it, the port handles
    the game's reads/writes through NULL pointers and raw GBA addresses the way the GBA does instead of
    crashing (see "How it works"). Without it the game still runs, but those spots crash. The log says
    `fault handler: active` when it is in use.
-4. **Copy your own ROM dump** of Kingdom Hearts: Chain of Memories (USA) to `ux0:data/khcom/rom.gba`
+4. **Copy your own ROM dump** of Kingdom Hearts: Chain of Memories to `ux0:data/khcom/rom.gba`
    (create the folder if needed; any `*.gba` file in that folder with the right checksum also works). It
-   must be the unmodified cartridge dump, SHA-1 `10729bd884f8fdca7a310b6d606c52e46657aa48`. At every
+   must be the unmodified cartridge dump: USA, SHA-1 `10729bd884f8fdca7a310b6d606c52e46657aa48`, or
+   Europe, SHA-1 `8db73586cdb11b3795907edebf43228dbcd3e6b2`. `rom.gba` is used first; otherwise the USA
+   ROM wins when both are in the folder. At every
    launch the port checks it and loads the game's graphics, text, music and movies from it (about 1–2 s);
    without it a message explains where to put it.
 5. Run it. On first launch it creates the rest of `ux0:data/khcom/`:
@@ -88,8 +98,8 @@ Early and experimental (see `port/vita/VERSION`).
 | File | Purpose |
 |---|---|
 | `rom.gba` | Your ROM dump (you copy it) |
-| `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1`, and the menu's choices: `upscale=off\|scale3x`, `sharp`, `gba_colors`, `touch_unstock`, `square_dodge`, `triangle_lr`, `right_stick`, `field_hud`, `wide_menus`, `skip_intro` (`0\|1`), `save_bank=1-5` |
-| `khcom.sav` | Save data (the GBA's SRAM), save bank 1; `khcom2.sav` … `khcom5.sav` are banks 2–5 |
+| `config.ini` | `display=wide\|fit\|stretch`, `filter=linear\|nearest`, `swap_ab=0\|1`, and the menu's choices: `upscale=off\|scale2x\|scale3x\|mmpx`, `upscale_target=all\|sprites\|scenery`, `touch_unstock=off\|hold\|double_tap\|both`, `unstock_hold=0.5\|1\|1.5\|2`, `sharp`, `gba_colors`, `square_dodge`, `triangle_lr`, `right_stick`, `field_hud`, `wide_menus`, `skip_intro` (`0\|1`), `save_bank=1-5` |
+| `khcom.sav` | Save data (the GBA's SRAM), save bank 1; `khcom2.sav` … `khcom5.sav` are banks 2–5. The European version uses `khcom_eu.sav` … `khcom_eu5.sav` |
 | `log.txt` | Startup trace and a status line with frame timings every second |
 | `log_prev.txt` | The previous run's log (kept when you relaunch after a crash) |
 
@@ -113,7 +123,8 @@ Tested on macOS (Apple Silicon). Linux works with the equivalent packages.
 - `libpng` and `pkg-config` (for the decomp's `gbagfx` tool)
 - [agbcc](https://github.com/pret/agbcc) and the decomp's legacy toolchain (see step 3)
 - Your own ROM dump: **Kingdom Hearts: Chain of Memories (USA)**, `B8CE`, SHA-1
-  `10729bd884f8fdca7a310b6d606c52e46657aa48`
+  `10729bd884f8fdca7a310b6d606c52e46657aa48`; optionally the **European** one, `B8CP`, SHA-1
+  `8db73586cdb11b3795907edebf43228dbcd3e6b2`, to include the European version
 
 ### 1. Set up the source tree
 
@@ -126,13 +137,14 @@ cd khcom
 python3 -m venv .venv && .venv/bin/pip install pyyaml pillow -r requirements.txt
 export PATH="$PWD/.venv/bin:$PATH"
 cp /path/to/your/rom.gba roms/B8CE.gba
+cp /path/to/your/european/rom.gba roms/B8CP.gba   # optional
 ```
 
 ### 2. Extract the game's assets from your ROM
 
 ```sh
 sh tools/fetch_gbagfx.sh      # builds gbagfx (needs libpng)
-python3 tools/extract_assets.py
+python3 tools/extract_assets.py       # add "eu" to also extract the European ROM's assets
 ```
 
 ### 3. Build the reference GBA ROM
@@ -142,7 +154,8 @@ original ROM must be built once. Follow the decomp's README to install agbcc and
 `python3 tools/setup_legacy_toolchain.py`, then:
 
 ```sh
-tools/vita/check_gba_match.sh # must print "OK: build/us/com_us.gba matches"
+tools/vita/check_gba_match.sh    # must print "OK: build/us/com_us.gba matches"
+tools/vita/check_gba_match.sh eu # with the European ROM: "OK: build/eu/com_eu.gba matches"
 ```
 
 Notes for macOS:
@@ -160,7 +173,9 @@ python3 tools/vita/configure_vita.py
 ninja -f build.vita.ninja
 ```
 
-The VPK is written to `build/vita/khcom_us_vX.XX.XX.vpk`. After the first configure, `ninja` re-runs the
+The VPK is written to `build/vita/khcom_vX.XX.XX.vpk`. It holds the USA executable and, when
+`roms/B8CP.gba` is present, the European one (`eboot_eu.self`), which the USA executable starts when the
+player's ROM is European. After the first configure, `ninja` re-runs the
 configure step by itself when `port/vita/VERSION` or the build script changes.
 
 ## How it works
@@ -176,10 +191,11 @@ A file-by-file guide, the build/runtime flow and the conventions for changing th
 | ROM data at runtime | `tools/vita/strip_rom_data.py`, `audit_rom_free.py`, `port/vita/host/vita_rom.c` | The game's data units and the decomp's constant C tables are linked into writable sections. After linking, every byte that equals the ROM is zeroed (only relocated pointer words stay) and `rommap.bin` records where each run comes from in the ROM; the build checks each run against the ROM, rebuilds the original executable from the stripped one to prove it, and fails if samples of the ROM can still be found in it. At startup the port verifies the player's ROM (SHA-1) and copies the runs back before any game code runs |
 | Hardware | `port/vita/game/gba_system.c` | Emulated IO registers, palette, VRAM, OAM and SRAM; DMA; interrupt dispatch; BIOS calls; the per-frame scanline/IRQ loop |
 | Sound | `port/vita/game/m4a_port.c`, `host/vita_audio.c` | The m4a sequencer and mixer (originally ARM/Thumb assembly) rewritten in C, resampled to 48 kHz for `sceAudioOut` |
-| Video | `port/vita/host/ppu.c`, `vita_render.c`, `vita_video.c` | Scanline renderer for the GBA picture processor (tile/affine/bitmap backgrounds, sprites, windows, blending, mosaic), run on two cores and presented with vitaGL |
+| Video | `port/vita/host/ppu.c`, `vita_render.c`, `vita_video.c`, `scale2x.c`, `scale3x.c`, `mmpx.c` | Scanline renderer for the GBA picture processor (tile/affine/bitmap backgrounds, sprites, windows, blending, mosaic), run on three cores in chunks of lines, optional upscalers (NEON), presented with vitaGL |
 | Widescreen | `port/vita/game/widescreen.c`, `ppu.c` | Captures each streamed map's camera after VBlank; the renderer fetches the widescreen margins from the full map |
 | Input | `port/vita/host/vita_input.c`, dodge hooks in `src/btl/btl.c`, unstock in `src/card/card_card.c` | Button mapping, Triangle → L+R, Square → dodge roll, right stick card controls, unstock (rear touch / right stick down) |
-| Port menu and overlays | `port/vita/host/vita_menu.c`, `vita_notice.c`, `vita_text.c` | Start + L + R menu (picture and control options), moogle points notice, unstock progress bar |
+| Port menu and overlays | `port/vita/host/vita_menu.c`, `vita_notice.c`, `vita_text.c` | Start + L + R menu (picture, control and game options, boss practice, tutorials), moogle points notice, unstock progress bar |
+| Boss practice | `port/vita/game/boss_practice.c`, hooks in `src/map/map.c`, `src/btl/` | Starts a beaten boss like an encounter, saves and restores the game state around it, scales enemy HP/attack to the chosen level |
 | GBA-style faults | `port/vita/host/vita_fault.c` | With kubridge, a data-abort handler decodes the faulting Thumb-2 load/store and performs it as the GBA would: BIOS-region reads return the BIOS open-bus value, writes there are dropped, raw GBA addresses are translated. Each emulated site is logged once |
 | Freeze watchdog | `port/vita/host/vita_fault.c` | If the game loop stops for 5 s, logs the state and forces a crash dump so a freeze can be located |
 | Decomp changes | `patches/khcom-vita.patch` | Hardware addresses routed through macros that still expand to the original values on GBA, plus Vita-only fixes. The GBA build still produces a byte-identical ROM |

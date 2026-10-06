@@ -28,4 +28,4 @@ cp -R "$REPO/tools/vita" "$DEST/tools/"
 
 echo
 echo "Ready: $DEST"
-echo "Next: put your own ROM dump at $DEST/roms/B8CE.gba and follow README.md."
+echo "Next: put your own ROM dump at $DEST/roms/B8CE.gba (and optionally the European one at roms/B8CP.gba), then follow README.md."

@@ -4,7 +4,14 @@
  *   PICTURE   the picture enhancements (vita_video.c, vita_render.c),
  *   CONTROLS  the control additions, each of which can be turned off
  *             (vita_input.c),
- *   GAME      the HP display on the field and the save bank (vita_main.c).
+ *   GAME      the HP display on the field and the save bank (vita_main.c),
+ *   BOSSES    boss practice: fight again a boss already beaten, with no XP or
+ *             rewards (port/vita/game/boss_practice.c); only while exploring
+ *             a world's rooms; elsewhere (battles, menus, events) the tab is
+ *             dimmed and skipped,
+ *             X on a boss asks for the enemy level first: ORIGINAL (the
+ *             story's strength) or 1 up to Sora's level,
+ *   TUTORIALS the battle tutorials, replayed the same way.
  *
  * The game is paused while it is open (it runs inside the frame wait, see
  * vita_main.c): the last frame stays on screen with the menu drawn over it,
@@ -35,13 +42,24 @@ static uint32_t sCanvas[MENU_W * MENU_H];
 #define COL_DIM RGBA(140, 140, 160, 255)
 #define COL_SELECT RGBA(255, 214, 64, 255)
 #define COL_TAB RGBA(40, 56, 130, 255)
+#define COL_OFF RGBA(70, 70, 90, 255)
 
-enum { TAB_PICTURE, TAB_CONTROLS, TAB_GAME, TAB_COUNT };
+enum { TAB_PICTURE, TAB_CONTROLS, TAB_GAME, TAB_BOSSES, TAB_TUTORIALS, TAB_COUNT };
 
-static const char* const sTabNames[TAB_COUNT] = { "PICTURE", "CONTROLS", "GAME" };
+static const char* const sTabNames[TAB_COUNT] = { "PICTURE", "CONTROLS", "GAME", "BOSSES", "TUTORIALS" };
+
+/* The two practice tabs: lists of fights (boss_practice.c). */
+#define IS_PRACTICE_TAB(tab) ((tab) == TAB_BOSSES || (tab) == TAB_TUTORIALS)
 
 /* The save bank picked in the menu; applied (restart) when it closes. */
 static int sBank;
+
+/* Whether the practice tabs can be opened (decided when the menu opens). */
+static int sBossTabOn;
+
+static int TabEnabled(int tab) {
+    return !IS_PRACTICE_TAB(tab) || sBossTabOn;
+}
 
 /* An on/off option, or (toggle == NULL) a special item handled by ItemValue /
  * ChangeItem below. */
@@ -51,22 +69,24 @@ typedef struct {
     int* toggle;
 } Item;
 
-enum { ITEM_UPSCALE = 1, ITEM_BANK, ITEM_CLOSE };
+enum { ITEM_UPSCALE = 1, ITEM_TARGET, ITEM_BANK, ITEM_TOUCH, ITEM_HOLD, ITEM_CLOSE };
 
-#define MAX_ITEMS 5
+#define MAX_ITEMS 6
 
 static const Item sPictureItems[] = {
-    { "SMOOTH EDGES", "SCALE3X: ROUNDS THE STAIR STEPS OF THE PIXEL ART", NULL },
+    { "SMOOTH EDGES", "SCALE2X/3X ROUND EDGES / MMPX KEEPS OUTLINES", NULL },
+    { "SMOOTH ON", "WHAT SMOOTH EDGES APPLIES TO", NULL },
     { "SHARP PIXELS", "EVEN CRISP PIXELS (WHEN SMOOTH EDGES IS OFF)", &gPortConfig.sharp },
     { "GBA COLORS", "COLORS AS ON THE GBA SCREEN", &gPortConfig.gbaColors },
     { "CLOSE", NULL, NULL },
 };
 
 static const Item sControlItems[] = {
-    { "REAR TOUCH: CLEAR CARDS", "HOLD 1S: STOCKED CARDS BACK TO THE HAND", &gPortConfig.touchUnstock },
+    { "REAR TOUCH: CLEAR CARDS", "STOCKED CARDS BACK TO THE HAND: HOLD / TAP TWICE", NULL },
+    { "CLEAR CARDS: HOLD FOR", "HOLD THE REAR TOUCH / RIGHT STICK DOWN THIS LONG", NULL },
     { "SQUARE: DODGE ROLL", "SQUARE: DODGE ROLL IN BATTLE", &gPortConfig.squareDodge },
     { "TRIANGLE: SELECT CARDS", "TRIANGLE = L + R: STOCK A CARD / SLEIGHT", &gPortConfig.triangleLR },
-    { "RIGHT STICK: CARDS", "LEFT/RIGHT: L/R  UP: L+R  DOWN 1S: CLEAR", &gPortConfig.rightStick },
+    { "RIGHT STICK: CARDS", "LEFT/RIGHT: L/R  UP: L+R  DOWN HELD: CLEAR", &gPortConfig.rightStick },
     { "CLOSE", NULL, NULL },
 };
 
@@ -99,20 +119,47 @@ static int ItemKind(const Item* it) {
     if (it == &sPictureItems[0]) {
         return ITEM_UPSCALE;
     }
+    if (it == &sPictureItems[1]) {
+        return ITEM_TARGET;
+    }
+    if (it == &sControlItems[0]) {
+        return ITEM_TOUCH;
+    }
+    if (it == &sControlItems[1]) {
+        return ITEM_HOLD;
+    }
     return it == &sGameItems[1] ? ITEM_BANK : ITEM_CLOSE;
 }
 
-static const char* const sUpscaleLabels[UPSCALE_COUNT] = { "OFF", "SCALE3X" };
+static const char* const sUpscaleLabels[UPSCALE_COUNT] = { "OFF", "SCALE2X", "SCALE3X", "MMPX" };
 
 static const char* ItemValue(const Item* it) {
     switch (ItemKind(it)) {
     case ITEM_UPSCALE:
         return sUpscaleLabels[gPortConfig.upscale];
+    case ITEM_TARGET: {
+        static const char* const labels[UPSCALE_TARGET_COUNT] = { "ALL", "SPRITES", "SCENERY" };
+
+        if (gPortConfig.upscale == UPSCALE_OFF) {
+            return "(NOT USED)";
+        }
+        return labels[gPortConfig.upscaleTarget];
+    }
     case ITEM_BANK: {
         static char label[24];
 
         snprintf(label, sizeof(label), "%d (SLOTS %d-%d)", sBank, sBank * 2 - 1, sBank * 2);
         return label;
+    }
+    case ITEM_TOUCH: {
+        static const char* const labels[TOUCH_UNSTOCK_COUNT] = { "OFF", "HOLD", "DOUBLE TAP", "BOTH" };
+
+        return labels[gPortConfig.touchUnstock];
+    }
+    case ITEM_HOLD: {
+        static const char* const labels[UNSTOCK_HOLD_STEPS] = { "0.5 S", "1 S", "1.5 S", "2 S" };
+
+        return labels[gPortConfig.unstockHold];
     }
     case ITEM_CLOSE:
         return "";
@@ -127,10 +174,90 @@ static const char* ItemValue(const Item* it) {
 static void ChangeItem(const Item* it, int dir) {
     if (ItemKind(it) == ITEM_UPSCALE) {
         gPortConfig.upscale = (gPortConfig.upscale + UPSCALE_COUNT + dir) % UPSCALE_COUNT;
+    } else if (ItemKind(it) == ITEM_TARGET) {
+        gPortConfig.upscaleTarget = (gPortConfig.upscaleTarget + UPSCALE_TARGET_COUNT + dir) % UPSCALE_TARGET_COUNT;
+    } else if (ItemKind(it) == ITEM_TOUCH) {
+        gPortConfig.touchUnstock = (gPortConfig.touchUnstock + TOUCH_UNSTOCK_COUNT + dir) % TOUCH_UNSTOCK_COUNT;
+    } else if (ItemKind(it) == ITEM_HOLD) {
+        gPortConfig.unstockHold = (gPortConfig.unstockHold + UNSTOCK_HOLD_STEPS + dir) % UNSTOCK_HOLD_STEPS;
     } else if (ItemKind(it) == ITEM_BANK) {
         sBank = (sBank - 1 + SAVE_BANKS + dir) % SAVE_BANKS + 1;
     } else if (it->toggle != NULL) {
         *it->toggle = !*it->toggle;
+    }
+}
+
+/* Boss practice tab ------------------------------------------------------------------ */
+
+#define BOSS_ROWS 6
+
+static int sBossList[64]; /* the fights got past, in story order */
+static int sBossCount;
+static int sPicking;   /* choosing the enemy level of the selected boss */
+static int sPickLevel; /* ... 0 = original, else 1 to Sora's level */
+static int sLastLevel; /* the last level picked, offered first next time */
+
+/* The bosses, or (tutorials) the tutorials, this file got past. */
+static void ListBosses(int tutorials) {
+    int i, n = PortBossCount();
+    const char *name, *place;
+
+    sBossCount = 0;
+    for (i = 0; i < n && sBossCount < (int)(sizeof(sBossList) / sizeof(sBossList[0])); i++) {
+        if (PortBossIsTutorial(i) == tutorials && PortBossInfo(i, &name, &place)) {
+            sBossList[sBossCount++] = i;
+        }
+    }
+}
+
+static void DrawBosses(int px, int py, int pw, int ph, int selected, int tutorials) {
+    int avail = PortBossAvailable();
+    const char *name, *place, *help;
+    int i, top;
+
+    if (sBossCount == 0) {
+        DrawText(px + 24, py + 58, tutorials ? "NO TUTORIAL DONE YET" : "NO BOSS BEATEN YET", COL_DIM, 1);
+    }
+    /* Scrolls to keep the selection in view. */
+    top = selected - BOSS_ROWS / 2;
+    if (top > sBossCount - BOSS_ROWS) {
+        top = sBossCount - BOSS_ROWS;
+    }
+    if (top < 0) {
+        top = 0;
+    }
+    for (i = top; i < sBossCount && i < top + BOSS_ROWS; i++) {
+        int y = py + 56 + (i - top) * 14;
+        uint32_t col = i == selected ? COL_SELECT : COL_TEXT;
+
+        PortBossInfo(sBossList[i], &name, &place);
+        if (i == selected) {
+            DrawText(px + 12, y, ">", col, 1);
+        }
+        DrawText(px + 24, y, name, col, 1);
+        DrawText(px + pw - 16 - TextWidth(place, 1), y, place, i == selected ? col : COL_DIM, 1);
+    }
+    if (top > 0) {
+        DrawText(px + pw / 2, py + 50, "^", COL_DIM, 1);
+    }
+    if (top + BOSS_ROWS < sBossCount) {
+        DrawText(px + pw / 2, py + 56 + BOSS_ROWS * 14 - 4, "v", COL_DIM, 1);
+    }
+    help = avail == PORT_BOSS_RIKU      ? "NOT AVAILABLE IN REVERSE/REBIRTH"
+           : avail != PORT_BOSS_OK     ? "AVAILABLE WHILE EXPLORING A WORLD'S ROOMS"
+           : sBossCount > 0            ? (tutorials ? "X: REPLAY  (BACK HERE AFTER)" : "X: FIGHT  (NO XP OR REWARDS, BACK HERE AFTER)")
+                                       : NULL;
+    if (sPicking) {
+        char line[64];
+
+        if (sPickLevel == 0) {
+            snprintf(line, sizeof(line), "ENEMY LEVEL:  < ORIGINAL >   (SORA LV %d)", PortBossSoraLevel());
+        } else {
+            snprintf(line, sizeof(line), "ENEMY LEVEL:  < LV %d >   (SORA LV %d)", sPickLevel, PortBossSoraLevel());
+        }
+        DrawText(px + 12, py + ph - 44, line, COL_SELECT, 1);
+    } else if (help != NULL) {
+        DrawText(px + 12, py + ph - 44, help, avail == PORT_BOSS_OK ? COL_TEXT : COL_SELECT, 1);
     }
 }
 
@@ -141,7 +268,6 @@ static void DrawMenu(int tab, int selected) {
     const Item* items;
     int count, i, x;
 
-    items = TabItems(tab, &count);
     memset(sCanvas, 0, sizeof(sCanvas));
     FillRect(px - 2, py - 2, pw + 4, ph + 4, COL_BORDER);
     FillRect(px, py, pw, ph, COL_PANEL);
@@ -158,13 +284,25 @@ static void DrawMenu(int tab, int selected) {
         if (i == tab) {
             FillRect(x, py + 32, w, 15, COL_TAB);
         }
-        DrawText(x + 8, py + 36, sTabNames[i], i == tab ? COL_SELECT : COL_DIM, 1);
+        DrawText(x + 8, py + 36, sTabNames[i], i == tab ? COL_SELECT : TabEnabled(i) ? COL_DIM : COL_OFF, 1);
         x += w + 8;
     }
     FillRect(px + 8, py + 48, pw - 16, 1, COL_TAB);
 
+    if (IS_PRACTICE_TAB(tab)) {
+        DrawBosses(px, py, pw, ph, selected, tab == TAB_TUTORIALS);
+        if (sPicking) {
+            DrawText(px + 12, py + ph - 26, "LEFT/RIGHT: 1 LEVEL  UP/DOWN: 10 LEVELS", COL_DIM, 1);
+            DrawText(px + 12, py + ph - 14, "X: FIGHT  O: BACK", COL_DIM, 1);
+        } else {
+            DrawText(px + 12, py + ph - 26, "L/R: TAB  UP/DOWN: SELECT  X: FIGHT", COL_DIM, 1);
+            DrawText(px + 12, py + ph - 14, "O OR START+L+R: CLOSE", COL_DIM, 1);
+        }
+        return;
+    }
+    items = TabItems(tab, &count);
     for (i = 0; i < count; i++) {
-        int y = py + 58 + i * 18;
+        int y = py + 58 + i * (count > 5 ? 15 : 18);
         uint32_t col = i == selected ? COL_SELECT : COL_TEXT;
         const char* v = ItemValue(&items[i]);
 
@@ -204,6 +342,12 @@ void MenuRun(void) {
 
     gPortMenuOpen = 1;
     sBank = gPortConfig.saveBank;
+    /* Boss practice only starts from the field (not in a battle), in Sora's story. */
+    sBossTabOn = PortBossAvailable() == PORT_BOSS_OK;
+    sPicking = 0;
+    if (!TabEnabled(sTab)) {
+        sTab = TAB_PICTURE;
+    }
     PortLog("menu: opened");
     while (!done) {
         uint32_t b = ReadButtons();
@@ -212,9 +356,55 @@ void MenuRun(void) {
         const Item* items = TabItems(sTab, &count);
 
         if ((pressed & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)) && (b & chord) != chord) {
-            sTab = (sTab + TAB_COUNT + ((pressed & SCE_CTRL_LTRIGGER) ? -1 : 1)) % TAB_COUNT;
+            do {
+                sTab = (sTab + TAB_COUNT + ((pressed & SCE_CTRL_LTRIGGER) ? -1 : 1)) % TAB_COUNT;
+            } while (!TabEnabled(sTab));
             items = TabItems(sTab, &count);
             selected = 0;
+            sPicking = 0;
+        }
+        if (IS_PRACTICE_TAB(sTab)) {
+            /* A list of fights instead of options. */
+            ListBosses(sTab == TAB_TUTORIALS);
+            count = sBossCount > 0 ? sBossCount : 1;
+            if (selected >= count) {
+                selected = count - 1;
+            }
+            if (sPicking) {
+                /* The enemy level (BOSSES only): wraps between ORIGINAL and Sora's level. */
+                int max = PortBossSoraLevel();
+
+                if (pressed & SCE_CTRL_RIGHT) {
+                    sPickLevel = sPickLevel >= max ? 0 : sPickLevel + 1;
+                }
+                if (pressed & SCE_CTRL_LEFT) {
+                    sPickLevel = sPickLevel <= 0 ? max : sPickLevel - 1;
+                }
+                if (pressed & SCE_CTRL_UP) {
+                    sPickLevel = sPickLevel + 10 > max ? max : sPickLevel + 10;
+                }
+                if (pressed & SCE_CTRL_DOWN) {
+                    sPickLevel = sPickLevel - 10 < 0 ? 0 : sPickLevel - 10;
+                }
+                if (pressed & SCE_CTRL_CROSS) {
+                    sLastLevel = sPickLevel;
+                    PortBossRequest(sBossList[selected], sPickLevel);
+                    done = 1;
+                }
+                if (pressed & SCE_CTRL_CIRCLE) {
+                    sPicking = 0;
+                }
+                pressed &= ~(SCE_CTRL_UP | SCE_CTRL_DOWN | SCE_CTRL_CIRCLE);
+            } else if ((pressed & SCE_CTRL_CROSS) && sBossCount > 0 && PortBossAvailable() == PORT_BOSS_OK) {
+                if (sTab == TAB_TUTORIALS) {
+                    PortBossRequest(sBossList[selected], 0);
+                    done = 1;
+                } else {
+                    sPicking = 1;
+                    sPickLevel = sLastLevel > PortBossSoraLevel() ? PortBossSoraLevel() : sLastLevel;
+                }
+            }
+            pressed &= ~(SCE_CTRL_LEFT | SCE_CTRL_RIGHT | SCE_CTRL_CROSS);
         }
         if (pressed & SCE_CTRL_UP) {
             selected = (selected + count - 1) % count;
@@ -244,8 +434,8 @@ void MenuRun(void) {
         VideoPresent();
     }
     PortSaveConfig();
-    PortLog("menu: closed (upscale %d, sharp %d, gba colors %d; touch %d, square %d, triangle %d, rstick %d)",
-            gPortConfig.upscale, gPortConfig.sharp, gPortConfig.gbaColors, gPortConfig.touchUnstock,
+    PortLog("menu: closed (upscale %d, sharp %d, gba colors %d; touch %d hold %d, square %d, triangle %d, rstick %d)",
+            gPortConfig.upscale, gPortConfig.sharp, gPortConfig.gbaColors, gPortConfig.touchUnstock, gPortConfig.unstockHold,
             gPortConfig.squareDodge, gPortConfig.triangleLR, gPortConfig.rightStick);
     gPortMenuOpen = 0;
     /* Swaps the other save file in. */

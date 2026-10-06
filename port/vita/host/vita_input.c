@@ -11,10 +11,11 @@
  * Additions, each can be turned off in the menu's controls tab:
  *   Triangle            -> L + R together (stock a card / sleight)
  *   Square              -> dodge roll (see btl.c, task_btl_sora_1)
- *   Rear touch, held 1 s -> card battles: the stocked cards go back to the
- *                          hand (PortTakeUnstockRequest)
+ *   Rear touch          -> card battles: the stocked cards go back to the
+ *                          hand (PortTakeUnstockRequest), when held 0.5-2 s
+ *                          or tapped twice within half a second (menu)
  *   Right stick         -> left / right: L / R (previous / next card),
- *                          up: L + R, down held 1 s: as the rear touch
+ *                          up: L + R, down held as long: as the rear touch
  */
 #include <psp2/ctrl.h>
 #include <psp2/touch.h>
@@ -43,6 +44,17 @@ static int sMenuRequest;
 
 #define MENU_CHORD (SCE_CTRL_START | SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)
 
+/* Start is held back from the game for a few frames: pressed a moment before
+ * the shoulders, the Start of the menu chord used to reach the game too and
+ * open its own pause menu under the port menu (which then also left the
+ * field's main loop, so boss practice could not start). A Start that turns
+ * out to be part of the chord never reaches the game; a short tap is passed
+ * on after its release. */
+#define START_HOLD_BACK 4
+static int sStartFrames; /* frames Start has been held */
+static int sStartChord;  /* this press of Start went with a shoulder */
+static int sStartPulse;  /* frames left of a released tap to pass on */
+
 /* Unstock: frames the rear touch / right stick down were held, and a request
  * waiting for a battle to take it (it expires so one made outside a battle
  * doesn't fire later). */
@@ -50,6 +62,13 @@ static int sMenuRequest;
 static int sRearFrames;
 static int sStickDownFrames;
 static int sUnstockPending;
+
+/* Double tap on the rear touch: two touches, each short, the second starting
+ * within DOUBLE_TAP_FRAMES of the first. */
+#define DOUBLE_TAP_FRAMES 30
+static int sTouchDown;    /* the rear pad is being touched */
+static int sTouchFrames;  /* ... for this many frames */
+static int sTapAge = -1;  /* frames since the last short tap began, -1: none */
 
 /* Right stick: a direction is taken once the stick is pushed past
  * RSTICK_PUSH, from the axis it is pushed further along, and kept until the
@@ -99,12 +118,31 @@ static void HoldUnstock(int held, int* frames) {
 
 static void PollRearTouch(void) {
     SceTouchData touch;
+    int mode = gPortConfig.touchUnstock;
     int held = 0;
 
-    if (gPortConfig.touchUnstock && sceTouchPeek(SCE_TOUCH_PORT_BACK, &touch, 1) >= 1) {
+    if (mode != TOUCH_UNSTOCK_OFF && sceTouchPeek(SCE_TOUCH_PORT_BACK, &touch, 1) >= 1) {
         held = touch.reportNum > 0;
     }
-    HoldUnstock(held, &sRearFrames);
+    HoldUnstock(held && (mode == TOUCH_UNSTOCK_HOLD || mode == TOUCH_UNSTOCK_BOTH), &sRearFrames);
+
+    if (sTapAge >= 0 && ++sTapAge > DOUBLE_TAP_FRAMES) {
+        sTapAge = -1;
+    }
+    if (held && !sTouchDown) {
+        /* A new touch: the second of a double tap, or maybe the first. */
+        if (sTapAge >= 0 && (mode == TOUCH_UNSTOCK_DOUBLE_TAP || mode == TOUCH_UNSTOCK_BOTH)) {
+            sUnstockPending = UNSTOCK_PENDING_FRAMES;
+            sTapAge = -1;
+        } else {
+            sTapAge = 0;
+        }
+        sTouchFrames = 0;
+    }
+    if (held && ++sTouchFrames > DOUBLE_TAP_FRAMES) {
+        sTapAge = -1; /* a hold, not a tap */
+    }
+    sTouchDown = held;
 }
 
 static uint16_t PollRightStick(const SceCtrlData* pad) {
@@ -170,10 +208,25 @@ void InputPoll(void) {
     if (b & SCE_CTRL_CIRCLE) keys |= gPortConfig.swapAB ? GBA_A : GBA_B;
     if (b & SCE_CTRL_LTRIGGER) keys |= GBA_L;
     if (b & SCE_CTRL_RTRIGGER) keys |= GBA_R;
-    /* Start with both shoulders held belongs to the menu chord. */
-    if ((b & SCE_CTRL_START) && (b & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)) !=
-                                    (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)) {
+    /* Start with a shoulder held may be the menu chord (see START_HOLD_BACK). */
+    if (b & SCE_CTRL_START) {
+        sStartFrames++;
+        if (b & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)) {
+            sStartChord = 1;
+        }
+        if (!sStartChord && sStartFrames > START_HOLD_BACK) {
+            keys |= GBA_START;
+        }
+    } else {
+        if (sStartFrames > 0 && sStartFrames <= START_HOLD_BACK && !sStartChord) {
+            sStartPulse = 2;
+        }
+        sStartFrames = 0;
+        sStartChord = 0;
+    }
+    if (sStartPulse > 0) {
         keys |= GBA_START;
+        sStartPulse--;
     }
     if ((b & MENU_CHORD) == MENU_CHORD && (sPrevButtons & MENU_CHORD) != MENU_CHORD) {
         sMenuRequest = 1;

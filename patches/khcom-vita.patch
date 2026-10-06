@@ -1,5 +1,5 @@
 diff --git a/.gitignore b/.gitignore
-index e94a4a2b4..bb820173e 100644
+index e94a4a2b4..1de5adb85 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -45,3 +45,10 @@ tools/gbagfx/
@@ -8,7 +8,7 @@ index e94a4a2b4..bb820173e 100644
  tools/_tmp_movie_encode_re.md
 +.venv/
 +tools/legacy/
-+build.vita.ninja
++build.vita*.ninja
 +.ninja_log
 +port/vita/libshacccg.suprx
 +build/vita/*.psp2dmp
@@ -259,6 +259,57 @@ index 67fcd2d9d..45f06241d 100644
  
  typedef volatile u8 vu8;
  typedef volatile u16 vu16;
+diff --git a/include/wide_layout.h b/include/wide_layout.h
+new file mode 100644
+index 000000000..d9422be1f
+--- /dev/null
++++ b/include/wide_layout.h
+@@ -0,0 +1,45 @@
++#ifndef GUARD_WIDE_LAYOUT_H
++#define GUARD_WIDE_LAYOUT_H
++
++#ifdef PLATFORM_VITA
++#include "port.h"
++/*
++ * Vita port, 16:9 layout of the menus drawn over the field (pause, save, the
++ * door's card selection): instead of being stretched, their parts are
++ * anchored to the edges of the wide screen at their own size. The left
++ * column (title, commands, cursor) moves into the left margin, the panels on
++ * the right into the right one, and the top and bottom bands are drawn twice,
++ * shifted both ways, so they span the screen.
++ */
++#define MENU_LEFT(x) ((x) - PortWideMargin())
++#define MENU_RIGHT(x) ((x) + PortWideMargin())
++#define MENU_LEFT_FX(x) ((x) - (PortWideMargin() << 8))
++/* The save menu's file panel is a 256-pixel BG map: moved by two whole tiles
++ * the wrapped-around columns that show on the left are its empty ones. */
++#define SAVE_SHIFT (PortWideMargin() > 0 ? 16 : 0)
++#define SAVE_RIGHT(x) ((x) + SAVE_SHIFT)
++/* A band drawn at column x, twice, shifted both ways. */
++#define MENU_BAND_X(x, y, gfx, tiles, pal, flags, order)                                   \
++    do {                                                                                  \
++        DrawSprite((x) - PortWideMargin(), y, gfx, tiles, pal, NULL, flags, order);       \
++        if (PortWideMargin() > 0) {                                                       \
++            DrawSprite((x) + PortWideMargin(), y, gfx, tiles, pal, NULL, flags, order);   \
++        }                                                                                 \
++    } while (0)
++#define MENU_BAND(y, gfx, tiles, pal, flags, order)                                        \
++    do {                                                                                  \
++        DrawSprite(128 - PortWideMargin(), y, gfx, tiles, pal, NULL, flags, order);       \
++        if (PortWideMargin() > 0) {                                                       \
++            DrawSprite(128 + PortWideMargin(), y, gfx, tiles, pal, NULL, flags, order);   \
++        }                                                                                 \
++    } while (0)
++#else
++#define MENU_LEFT(x) (x)
++#define MENU_RIGHT(x) (x)
++#define MENU_LEFT_FX(x) (x)
++#define SAVE_RIGHT(x) (x)
++#define MENU_BAND_X(x, y, gfx, tiles, pal, flags, order) DrawSprite(x, y, gfx, tiles, pal, NULL, flags, order)
++#define MENU_BAND(y, gfx, tiles, pal, flags, order) DrawSprite(128, y, gfx, tiles, pal, NULL, flags, order)
++#endif
++
++#endif
 diff --git a/src/bos/bos_dsd_main.c b/src/bos/bos_dsd_main.c
 index 4c7109e94..380c2a9b7 100644
 --- a/src/bos/bos_dsd_main.c
@@ -323,7 +374,7 @@ index d8ea84b0d..17d4c2da7 100644
  #include "registration_data.h"
  #include "boss_tm.h"
 diff --git a/src/btl/battle_runtime.c b/src/btl/battle_runtime.c
-index ee38e1e97..070e1aa2f 100644
+index ee38e1e97..9fe1362be 100644
 --- a/src/btl/battle_runtime.c
 +++ b/src/btl/battle_runtime.c
 @@ -1,4 +1,8 @@
@@ -347,18 +398,60 @@ index ee38e1e97..070e1aa2f 100644
      if (a == (L_BUTTON | R_BUTTON)) {
          if (GetSoraStockCount() > 2) {
              RequestSoraStockUse();
-@@ -508,6 +517,11 @@ void HandleTutorialCardInput() {
+@@ -508,6 +517,16 @@ void HandleTutorialCardInput() {
          return;
      }
  
 +#ifdef PLATFORM_VITA
-+    if (PortTakeUnstockRequest()) {
-+        PortRequestUnstockSora();
-+    }
++    /*
++     * No unstocking (rear touch / right stick, a port addition) in the
++     * tutorials: Leon's has Sora stock three cards and then, with stocking
++     * turned off, waits for him to use them as a sleight; emptying the stock
++     * in between left it waiting for good. The request is still taken so it
++     * does not fire later.
++     */
++    PortTakeUnstockRequest();
 +#endif
      if (a == (L_BUTTON | R_BUTTON)) {
          if (GetSoraStockCount() > 2) {
              if (!(gBtlWork->flags & BTL_FLAG_TUTORIAL_NO_STOCK_USE)) {
+@@ -981,6 +1000,12 @@ void UpdateBattleState() {
+             gBtlWork->hitStop = 100;
+         } else if (gBtlWork->phaseStep > 140 && !FadeIsActive()) {
+             m4aMPlayAllStop();
++#ifdef PLATFORM_VITA
++            /* Boss practice lost: straight back to the field. */
++            if (PortBossEnd(0)) {
++                break;
++            }
++#endif
+ 
+             if (gDebugFlags & DEBUG_FLAG_CHKBTL) {
+                 ModeRequest(&gModeChkbtl, 0);
+@@ -1617,6 +1642,10 @@ void InitEnemyBtlObj(BtlObj* p, const EmyKind* d, s32 x, s32 y, s32 z) {
+         v = d->id;
+     }
+ 
++#ifdef PLATFORM_VITA
++    /* Boss practice at a chosen enemy level. */
++    PortBossScaleEnemy(&p->maxHp, &p->attack);
++#endif
+     p->attackOffset = 80;
+     p->attackRangeX = 32;
+     p->attackRangeY = 32;
+@@ -2252,6 +2281,12 @@ void SetBtlObjUnhittable(BtlObj* p, u8 f) {
+ 
+ void ExitBattle() {
+     m4aMPlayAllStop();
++#ifdef PLATFORM_VITA
++    /* Boss practice won: no story events, back to the field. */
++    if (PortBossEnd(1)) {
++        return;
++    }
++#endif
+ 
+     if (gDebugFlags & DEBUG_FLAG_CHKBTL) {
+         ModeRequest(&gModeChkbtl, 0);
 diff --git a/src/btl/btl.c b/src/btl/btl.c
 index 68fff4445..22f9d0a49 100644
 --- a/src/btl/btl.c
@@ -449,7 +542,7 @@ index 68fff4445..22f9d0a49 100644
  
      if (p->badStatus == BAD_STATUS_CONFUSE) {
 diff --git a/src/btl/btl2.c b/src/btl/btl2.c
-index 64dd3e0f7..d7c119698 100644
+index 64dd3e0f7..8b308c200 100644
 --- a/src/btl/btl2.c
 +++ b/src/btl/btl2.c
 @@ -1,3 +1,8 @@
@@ -524,7 +617,18 @@ index 64dd3e0f7..d7c119698 100644
          }
      }
  }
-@@ -2009,3 +2035,182 @@ TaskDesc gTaskDescBtlStart = {
+@@ -1592,6 +1618,10 @@ s32 task_btl_prize_1(BtlPrizeWork* work) {
+                         work->actor->hp = work->actor->maxHp;
+                     }
+ 
++#ifdef PLATFORM_VITA
++                    /* Boss practice gives no XP. */
++                    if (!PortBossActive())
++#endif
+                     gGameState.progression.exp += work->exp;
+                 }
+ 
+@@ -2009,3 +2039,182 @@ TaskDesc gTaskDescBtlStart = {
      NULL,
      sizeof(BtlStartWork),
  };
@@ -783,6 +887,89 @@ index ee8c5c807..a622a97bd 100644
  }
  
  static void Continue_2(ContinueWork* p) {
+diff --git a/src/btl/mode_battle.c b/src/btl/mode_battle.c
+index be50b6fb4..4ba1ab818 100644
+--- a/src/btl/mode_battle.c
++++ b/src/btl/mode_battle.c
+@@ -21,10 +21,16 @@
+ #include "task_descriptors.h"
+ #include "taskpool.h"
+ #include "types.h"
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
+ 
+ void mode_battle_0(u32 mode) {
+     BtlWork** p;
+ 
++#ifdef PLATFORM_VITA
++    PortBossBattleInit();
++#endif
+     gBtlWork = EwramAlloc(sizeof(BtlWork));
+     gRikuBtlWork = NULL;
+     BtlWorkInit();
+@@ -418,6 +424,9 @@ void mode_battle_2() {
+     }
+ 
+     EwramFree(gBtlWork);
++#ifdef PLATFORM_VITA
++    PortBossBattleExit();
++#endif
+ }
+ 
+ Mode gModeBattle = { "mode_battle", (ModeInitFunc)mode_battle_0, mode_battle_1, mode_battle_2 };
+diff --git a/src/btl/tutorial.c b/src/btl/tutorial.c
+index 5c7feb322..1df6387c2 100644
+--- a/src/btl/tutorial.c
++++ b/src/btl/tutorial.c
+@@ -17,6 +17,9 @@
+ #include <stddef.h>
+ #include "taskpool.h"
+ #include "types.h"
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
+ 
+ void task_tutorial_0(TutorialWork* work, s32 arg1) {
+     gBg0Cnt = 0;
+@@ -43,6 +46,15 @@ void task_tutorial_0(TutorialWork* work, s32 arg1) {
+ }
+ 
+ s32 task_tutorial_1(TutorialWork* work) {
++#ifdef PLATFORM_VITA
++    static u8 sLoggedState = 0xFF;
++
++    /* For bug reports: where the tutorial is. */
++    if (work->state != sLoggedState) {
++        sLoggedState = work->state;
++        PortLog("tutorial: state %d (stock %d)", work->state, GetSoraStockCount());
++    }
++#endif
+     switch (work->state) {
+     case 0:
+         if (work->timer > work->unk_00E) {
+@@ -481,6 +493,21 @@ s32 task_tutorial_1(TutorialWork* work) {
+             TutorialCloseMessage();
+             work->unk_00E++;
+         }
++#ifdef PLATFORM_VITA
++        /*
++         * Softlock fix: here only stocking is allowed (no card selection, no
++         * card use, so no reload either). If the hand ran out before three
++         * cards were stocked (a card broken by Leon is used up without
++         * counting as an attack, so the earlier step can take more cards
++         * than planned), the cursor sits on the reload card and nothing can
++         * be done. Reload the deck then, as the King's card does.
++         */
++        if (work->timer > 10 && GetSoraStockCount() <= 2 && IsSoraReloadCardSelected() &&
++            !(gBtlWork->flags & (BTL_FLAG_RELOADING | BTL_FLAG_PLAYER_CARD_ACTION))) {
++            PortLog("tutorial: hand ran out while stocking, reloading the deck");
++            RequestSoraKingReload0();
++        }
++#endif
+ 
+         if (GetSoraStockCount() <= 2) {
+             work->timer++;
 diff --git a/src/card/card_battle.c b/src/card/card_battle.c
 index 7aa662205..360207f9f 100644
 --- a/src/card/card_battle.c
@@ -1066,6 +1253,280 @@ index 3cd360308..e583cbea9 100644
  }
  
  void DispatchEnemyCardCommand(CardDisplayWork* p, void* a) {
+diff --git a/src/card/card_level_up.c b/src/card/card_level_up.c
+index e33bde484..04fe9704c 100644
+--- a/src/card/card_level_up.c
++++ b/src/card/card_level_up.c
+@@ -1,4 +1,7 @@
+ #include "card_localized_data.h"
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
+ #include "registration_data.h"
+ #include "system_state.h"
+ #include "card_battle.h"
+@@ -33,6 +36,12 @@
+ #include "gba/defines.h"
+ #include "sprite_palettes.h"
+ #include <stddef.h>
++#include "wide_layout.h"
++
++#ifdef PLATFORM_VITA
++/* Column between the bonus boxes and the stat panels (16:9 split). */
++#define LEVEL_UP_SPLIT 146
++#endif
+ 
+ u8 UpdateLevelUpWaitFade();
+ s32 IsLevelUpApUnlocked();
+@@ -61,6 +70,12 @@ static const s16 sLevelUpApLevels[20] = { 2, 5, 10, 15, 20, 25, 30, 35, 40, 45,
+ void Level_Up_0(LevelUpWork* w) {
+     s16 x;
+     s16 y;
++#ifdef PLATFORM_VITA
++    /* 16:9: the bonus boxes on the left and the stat panels on the right
++     * move apart into the margins (see Level_Up_2 for the sprites). */
++    PortBgSplit(0, LEVEL_UP_SPLIT);
++    PortBgSplit(1, LEVEL_UP_SPLIT);
++#endif
+ 
+     w->tiles4 = NULL;
+     w->palette5 = NULL;
+@@ -1079,7 +1094,7 @@ void Level_Up_2(LevelUpWork* w) {
+     if (w->loaded[0] != 0) {
+         switch (w->state) {
+         case 0:
+-            DrawSprite(w->x6, 0,
++            DrawSprite(MENU_LEFT(w->x6), 0,
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage][10],
+ #else
+@@ -1091,10 +1106,10 @@ void Level_Up_2(LevelUpWork* w) {
+ #ifdef VERSION_EU
+                 if (gLanguage != LANGUAGE_ITALIAN) {
+ #endif
+-                    DrawSprite(w->x4[0], w->y4[0], gUnk_09EEA2BC[0], w->unk_000[0], w->unk_000[4], NULL, 0, 50);
++                    DrawSprite(MENU_LEFT(w->x4[0]), w->y4[0], gUnk_09EEA2BC[0], w->unk_000[0], w->unk_000[4], NULL, 0, 50);
+ #ifdef VERSION_EU
+                 } else {
+-                    DrawSprite(w->x4[0], w->y4[0], gUnkEu_09F7626C[0], w->unk_000[0], w->unk_000[4], NULL, 0, 50);
++                    DrawSprite(MENU_LEFT(w->x4[0]), w->y4[0], gUnkEu_09F7626C[0], w->unk_000[0], w->unk_000[4], NULL, 0, 50);
+                 }
+ #endif
+             }
+@@ -1103,10 +1118,10 @@ void Level_Up_2(LevelUpWork* w) {
+ #ifdef VERSION_EU
+                 if (gLanguage != LANGUAGE_ITALIAN) {
+ #endif
+-                    DrawSprite(w->x4[1], w->y4[1], gUnk_09EEA2BC[1], w->unk_000[1], w->unk_000[4], NULL, 0, 50);
++                    DrawSprite(MENU_LEFT(w->x4[1]), w->y4[1], gUnk_09EEA2BC[1], w->unk_000[1], w->unk_000[4], NULL, 0, 50);
+ #ifdef VERSION_EU
+                 } else {
+-                    DrawSprite(w->x4[1], w->y4[1], gUnkEu_09F7626C[1], w->unk_000[1], w->unk_000[4], NULL, 0, 50);
++                    DrawSprite(MENU_LEFT(w->x4[1]), w->y4[1], gUnkEu_09F7626C[1], w->unk_000[1], w->unk_000[4], NULL, 0, 50);
+                 }
+ #endif
+             }
+@@ -1115,113 +1130,113 @@ void Level_Up_2(LevelUpWork* w) {
+ #ifdef VERSION_EU
+                 if (gLanguage != LANGUAGE_ITALIAN) {
+ #endif
+-                    DrawSprite(w->x4[2], w->y4[2], gUnk_09EEA2BC[2], w->unk_000[2], w->unk_000[4], NULL, 0, 50);
++                    DrawSprite(MENU_LEFT(w->x4[2]), w->y4[2], gUnk_09EEA2BC[2], w->unk_000[2], w->unk_000[4], NULL, 0, 50);
+ #ifdef VERSION_EU
+                 } else {
+-                    DrawSprite(w->x4[2], w->y4[2], gUnkEu_09F7626C[2], w->unk_000[2], w->unk_000[4], NULL, 0, 50);
++                    DrawSprite(MENU_LEFT(w->x4[2]), w->y4[2], gUnkEu_09F7626C[2], w->unk_000[2], w->unk_000[4], NULL, 0, 50);
+                 }
+ #endif
+             }
+ 
+-            DrawSprite(w->x, w->y >> 8, gUnk_09EEA1EC[0], w->tiles2, w->unk_000[7], NULL, SPRITE_PRIORITY(1), 51);
+-            DrawSprite(w->x2, w->y2 >> 8, gUnk_09EEA1EC[1], w->tiles2, w->unk_000[7], NULL, SPRITE_PRIORITY(1), 51);
++            MENU_BAND_X(w->x, w->y >> 8, gUnk_09EEA1EC[0], w->tiles2, w->unk_000[7], SPRITE_PRIORITY(1), 51);
++            MENU_BAND_X(w->x2, w->y2 >> 8, gUnk_09EEA1EC[1], w->tiles2, w->unk_000[7], SPRITE_PRIORITY(1), 51);
+             break;
+         case 1:
+             for (; i < 3; i++) {
+                 if (i == w->cursor) {
+ #ifdef VERSION_EU
+-                    DrawSprite(w->x5[i] + 5, w->y5[i] - 4, NULL, w->tiles5[i], w->palette, NULL, 0, 40);
++                    DrawSprite(MENU_LEFT(w->x5[i] + 5), w->y5[i] - 4, NULL, w->tiles5[i], w->palette, NULL, 0, 40);
+ #else
+-                    DrawTextSlots(w->x5[i] + 22, w->y5[i] - 5, w->textSlots[i], w->palette, 40, w->textSlotCounts[i]);
+-                    DrawTextSlots(w->x5[i] + 4, w->y5[i] + 13, w->textSlots[i + 3], w->palette, 40, w->textSlotCounts[i + 3]);
++                    DrawTextSlots(MENU_LEFT(w->x5[i] + 22), w->y5[i] - 5, w->textSlots[i], w->palette, 40, w->textSlotCounts[i]);
++                    DrawTextSlots(MENU_LEFT(w->x5[i] + 4), w->y5[i] + 13, w->textSlots[i + 3], w->palette, 40, w->textSlotCounts[i + 3]);
+ #endif
+                 } else {
+ #ifdef VERSION_EU
+-                    DrawSprite(w->x5[i] + 3, w->y5[i] - 2, NULL, w->tiles5[i], w->palette2, NULL, 0, 40);
++                    DrawSprite(MENU_LEFT(w->x5[i] + 3), w->y5[i] - 2, NULL, w->tiles5[i], w->palette2, NULL, 0, 40);
+ #else
+-                    DrawTextSlots(w->x5[i] + 20, w->y5[i] - 3, w->textSlots[i], w->palette2, 40, w->textSlotCounts[i]);
+-                    DrawTextSlots(w->x5[i] + 2, w->y5[i] + 15, w->textSlots[i + 3], w->palette2, 40, w->textSlotCounts[i + 3]);
++                    DrawTextSlots(MENU_LEFT(w->x5[i] + 20), w->y5[i] - 3, w->textSlots[i], w->palette2, 40, w->textSlotCounts[i]);
++                    DrawTextSlots(MENU_LEFT(w->x5[i] + 2), w->y5[i] + 15, w->textSlots[i + 3], w->palette2, 40, w->textSlotCounts[i + 3]);
+ #endif
+                 }
+             }
+ 
+-            DrawSprite(w->x3, w->y3, w->gfx2, w->tiles, w->palette3, NULL, 0, 40);
++            DrawSprite(MENU_LEFT(w->x3), w->y3, w->gfx2, w->tiles, w->palette3, NULL, 0, 40);
+             break;
+         case 2:
+             for (; i < 3; i++) {
+                 if (i == w->cursor) {
+ #ifdef VERSION_EU
+-                    DrawSprite(w->x5[i] + 4, w->y5[i] - 3, NULL, w->tiles5[i], w->palette, NULL, 0, 40);
++                    DrawSprite(MENU_LEFT(w->x5[i] + 4), w->y5[i] - 3, NULL, w->tiles5[i], w->palette, NULL, 0, 40);
+ #else
+-                    DrawTextSlots(w->x5[i] + 22, w->y5[i] - 5, w->textSlots[i], w->palette, 40, w->textSlotCounts[i]);
+-                    DrawTextSlots(w->x5[i] + 4, w->y5[i] + 13, w->textSlots[i + 3], w->palette, 40, w->textSlotCounts[i + 3]);
++                    DrawTextSlots(MENU_LEFT(w->x5[i] + 22), w->y5[i] - 5, w->textSlots[i], w->palette, 40, w->textSlotCounts[i]);
++                    DrawTextSlots(MENU_LEFT(w->x5[i] + 4), w->y5[i] + 13, w->textSlots[i + 3], w->palette, 40, w->textSlotCounts[i + 3]);
+ #endif
+-                    DrawSprite(w->x4[i], w->y4[i], gUnk_09EEA2D8[i], w->unk_000[i], w->unk_000[5], NULL, 0, 50);
++                    DrawSprite(MENU_LEFT(w->x4[i]), w->y4[i], gUnk_09EEA2D8[i], w->unk_000[i], w->unk_000[5], NULL, 0, 50);
+                 } else {
+                     if (w->unk_000[i] != NULL) {
+ #ifdef VERSION_EU
+-                        DrawSprite(w->x5[i] + 2, w->y5[i] - 1, NULL, w->tiles5[i], w->palette2, NULL, 0, 40);
++                        DrawSprite(MENU_LEFT(w->x5[i] + 2), w->y5[i] - 1, NULL, w->tiles5[i], w->palette2, NULL, 0, 40);
+ #else
+-                        DrawTextSlots(w->x5[i] + 20, w->y5[i] - 3, w->textSlots[i], w->palette2, 40, w->textSlotCounts[i]);
+-                        DrawTextSlots(w->x5[i] + 2, w->y5[i] + 15, w->textSlots[i + 3], w->palette2, 40, w->textSlotCounts[i + 3]);
++                        DrawTextSlots(MENU_LEFT(w->x5[i] + 20), w->y5[i] - 3, w->textSlots[i], w->palette2, 40, w->textSlotCounts[i]);
++                        DrawTextSlots(MENU_LEFT(w->x5[i] + 2), w->y5[i] + 15, w->textSlots[i + 3], w->palette2, 40, w->textSlotCounts[i + 3]);
+ #endif
+ #ifdef VERSION_EU
+                         if (gLanguage != LANGUAGE_ITALIAN) {
+ #endif
+-                            DrawSprite(w->x4[i], w->y4[i], gUnk_09EEA2BC[i], w->unk_000[i], w->unk_000[4], NULL, 0, 50);
++                            DrawSprite(MENU_LEFT(w->x4[i]), w->y4[i], gUnk_09EEA2BC[i], w->unk_000[i], w->unk_000[4], NULL, 0, 50);
+ #ifdef VERSION_EU
+                         } else {
+-                            DrawSprite(w->x4[i], w->y4[i], gUnkEu_09F7626C[i], w->unk_000[i], w->unk_000[4], NULL, 0, 50);
++                            DrawSprite(MENU_LEFT(w->x4[i]), w->y4[i], gUnkEu_09F7626C[i], w->unk_000[i], w->unk_000[4], NULL, 0, 50);
+                         }
+ #endif
+                     }
+                 }
+             }
+ 
+-            DrawSprite(w->x3, w->y3, w->gfx2, w->tiles, w->palette3, NULL, 0, 40);
++            DrawSprite(MENU_LEFT(w->x3), w->y3, w->gfx2, w->tiles, w->palette3, NULL, 0, 40);
+             break;
+         case 3:
+ #ifdef VERSION_EU
+-            DrawSprite(w->x5[w->cursor] + 2, w->y5[w->cursor] - 1, NULL, w->tiles5[w->cursor], w->palette, NULL, 0, 40);
++            DrawSprite(MENU_LEFT(w->x5[w->cursor] + 2), w->y5[w->cursor] - 1, NULL, w->tiles5[w->cursor], w->palette, NULL, 0, 40);
+ #else
+-            DrawTextSlots(w->x5[w->cursor] + 22, w->y5[w->cursor] - 5, w->textSlots[w->cursor], w->palette, 40, w->textSlotCounts[w->cursor]);
+-            DrawTextSlots(w->x5[w->cursor] + 4, w->y5[w->cursor] + 13, w->textSlots[w->cursor + 3], w->palette, 40, w->textSlotCounts[w->cursor + 3]);
++            DrawTextSlots(MENU_LEFT(w->x5[w->cursor] + 22), w->y5[w->cursor] - 5, w->textSlots[w->cursor], w->palette, 40, w->textSlotCounts[w->cursor]);
++            DrawTextSlots(MENU_LEFT(w->x5[w->cursor] + 4), w->y5[w->cursor] + 13, w->textSlots[w->cursor + 3], w->palette, 40, w->textSlotCounts[w->cursor + 3]);
+ #endif
+-            DrawSprite(w->x4[w->cursor], w->y4[w->cursor], NULL, w->unk_000[w->cursor], w->unk_000[5], NULL, 0, 50);
+-            DrawSprite(w->x6, 0,
++            DrawSprite(MENU_LEFT(w->x4[w->cursor]), w->y4[w->cursor], NULL, w->unk_000[w->cursor], w->unk_000[5], NULL, 0, 50);
++            DrawSprite(MENU_LEFT(w->x6), 0,
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage][10],
+ #else
+                        gUnk_09EEA1BC[10],
+ #endif
+                        w->unk_000[6], w->unk_000[7], NULL, 0, 50);
+-            DrawSprite(w->x, w->y >> 8, gUnk_09EEA1EC[0], w->tiles2, w->unk_000[7], NULL, SPRITE_PRIORITY(1), 51);
+-            DrawSprite(w->x2, w->y2 >> 8, gUnk_09EEA1EC[1], w->tiles2, w->unk_000[7], NULL, SPRITE_PRIORITY(1), 51);
++            MENU_BAND_X(w->x, w->y >> 8, gUnk_09EEA1EC[0], w->tiles2, w->unk_000[7], SPRITE_PRIORITY(1), 51);
++            MENU_BAND_X(w->x2, w->y2 >> 8, gUnk_09EEA1EC[1], w->tiles2, w->unk_000[7], SPRITE_PRIORITY(1), 51);
+             break;
+         }
+ 
+ #ifdef VERSION_JP
+         if (w->blinkOn != 0) {
+-            DrawSprite(192, 82, gUnk_09EEA19C[0], w->tiles3, w->palette4, NULL, 0, 10);
++            DrawSprite(MENU_RIGHT(192), 82, gUnk_09EEA19C[0], w->tiles3, w->palette4, NULL, 0, 10);
+         }
+ #endif
+ 
+         if (!(gGameState.flags & GAME_FLAG_RIKU)) {
+-            DrawLevelUpStatDigits(w->statsOffsetX + 214, 17, w->unk_000[6], w->unk_000[7],
++            DrawLevelUpStatDigits(MENU_RIGHT(w->statsOffsetX + 214), 17, w->unk_000[6], w->unk_000[7],
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage],
+ #else
+                        gUnk_09EEA1BC,
+ #endif
+                        w->levelDigits, 0);
+-            DrawLevelUpStatDigits(w->statsOffsetX + 214, 111, w->unk_000[6], w->unk_000[7],
++            DrawLevelUpStatDigits(MENU_RIGHT(w->statsOffsetX + 214), 111, w->unk_000[6], w->unk_000[7],
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage],
+ #else
+                        gUnk_09EEA1BC,
+ #endif
+                        w->maxHpDigits, 1);
+-            DrawLevelUpStatDigits(w->statsOffsetX + 206, 132, w->unk_000[6], w->unk_000[7],
++            DrawLevelUpStatDigits(MENU_RIGHT(w->statsOffsetX + 206), 132, w->unk_000[6], w->unk_000[7],
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage],
+ #else
+@@ -1229,28 +1244,28 @@ void Level_Up_2(LevelUpWork* w) {
+ #endif
+                        w->cpDigits, 2);
+         } else {
+-            DrawLevelUpStatDigits(w->statsOffsetX + 214, 17, w->unk_000[6], w->unk_000[7],
++            DrawLevelUpStatDigits(MENU_RIGHT(w->statsOffsetX + 214), 17, w->unk_000[6], w->unk_000[7],
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage],
+ #else
+                        gUnk_09EEA1BC,
+ #endif
+                        w->levelDigits, 0);
+-            DrawLevelUpStatDigits(w->statsOffsetX + 214, 106, w->unk_000[6], w->unk_000[7],
++            DrawLevelUpStatDigits(MENU_RIGHT(w->statsOffsetX + 214), 106, w->unk_000[6], w->unk_000[7],
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage],
+ #else
+                        gUnk_09EEA1BC,
+ #endif
+                        w->maxHpDigits, 1);
+-            DrawLevelUpStatDigits(w->statsOffsetX + 214, 122, w->unk_000[6], w->unk_000[7],
++            DrawLevelUpStatDigits(MENU_RIGHT(w->statsOffsetX + 214), 122, w->unk_000[6], w->unk_000[7],
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage],
+ #else
+                        gUnk_09EEA1BC,
+ #endif
+                        w->apDigits, 4);
+-            DrawLevelUpStatDigits(w->statsOffsetX + 214, 137, w->unk_000[6], w->unk_000[7],
++            DrawLevelUpStatDigits(MENU_RIGHT(w->statsOffsetX + 214), 137, w->unk_000[6], w->unk_000[7],
+ #ifdef VERSION_EU
+                        gUnk_09EEA1BC[gLanguage],
+ #else
+@@ -1260,16 +1275,19 @@ void Level_Up_2(LevelUpWork* w) {
+         }
+     }
+ 
+-    DrawSprite(w->x7 >> 8, w->y6 >> 8, w->gfx, w->tiles4, w->palette5, NULL, SPRITE_PRIORITY(1), 40);
++    DrawSprite(MENU_RIGHT(w->x7 >> 8), w->y6 >> 8, w->gfx, w->tiles4, w->palette5, NULL, SPRITE_PRIORITY(1), 40);
+     TaskPoolDraw(&w->pool);
+ }
+ 
+ void Level_Up_3(LevelUpWork* w) {
++#ifdef PLATFORM_VITA
++    PortBgSplit(0, 0);
++    PortBgSplit(1, 0);
++#endif
+ #ifdef VERSION_EU
+     if (w->tiles5[0] != NULL) {
+         ReleaseObjTiles(w->tiles5[0]);
+     }
+-
+     if (w->tiles5[1] != NULL) {
+         ReleaseObjTiles(w->tiles5[1]);
+     }
 diff --git a/src/card/card_map_anim.c b/src/card/card_map_anim.c
 index 88fba4bf1..118b6c7c7 100644
 --- a/src/card/card_map_anim.c
@@ -1166,7 +1627,7 @@ index a9d033f57..b58812c2c 100644
          if (gCardBattleState->darkModeReady == 1 || gBtlWork->darkPoints > 29) {
              gCardBattleState->darkModeReady = 0;
 diff --git a/src/card/card_worldselect.c b/src/card/card_worldselect.c
-index 2a5280e72..7f82c7590 100644
+index 2a5280e72..74cf70055 100644
 --- a/src/card/card_worldselect.c
 +++ b/src/card/card_worldselect.c
 @@ -1,3 +1,4 @@
@@ -1184,22 +1645,52 @@ index 2a5280e72..7f82c7590 100644
  #include "malloc.h"
  #include "card.h"
  #include "map_card_assets.h"
-@@ -130,6 +134,9 @@ void MapSelect_0(MapSelectWork* w, u8* a) {
+@@ -51,6 +55,7 @@
+ #include "gba/macro.h"
+ #include "sprite_palettes.h"
+ #include <stddef.h>
++#include "wide_layout.h"
+ 
+ static TaskPool sModeWorldselectTasks;
+ 
+@@ -130,6 +135,12 @@ void MapSelect_0(MapSelectWork* w, u8* a) {
      s32 n;
  
      ResetMessageWindowFlags();
 +#ifdef PLATFORM_VITA
-+    PortUiOverlay(1);
++    /* 16:9: the field shows in the margins and the bands span the screen;
++     * the card tray stays centered, and the cards of other pages, placed
++     * beside it, stay hidden (sprites clipped on the tray's rows). */
++    PortUiClipRows(72, 160);
 +#endif
      CpuFill32(0, w, sizeof(MapSelectWork));
      w->status = a;
      *a = 0;
-@@ -903,6 +910,9 @@ void MapSelect_2(MapSelectWork* w) {
+@@ -848,7 +859,7 @@ u8 UpdateMapSelectClose(MapSelectWork* w) {
+ 
+ void MapSelect_2(MapSelectWork* w) {
+     if (w->tiles3 != NULL && w->palette3 != NULL) {
+-        DrawSprite(w->x3 >> 8, w->titleY >> 8,
++        DrawSprite(MENU_LEFT(w->x3 >> 8), w->titleY >> 8,
+ #ifdef VERSION_EU
+                    gMapSelectTitleSpritesByLanguage[gLanguage][0],
+ #else
+@@ -895,14 +906,17 @@ void MapSelect_2(MapSelectWork* w) {
+         DrawSprite(120, 56, gCardBacks[4].gfx2, w->tiles2, w->palette, NULL, SPRITE_FLAG_MOSAIC, 60);
+     }
+ 
+-    DrawSprite(128, w->y3 >> 8, gUnk_09EF11AC[0], w->tiles7, w->palette3, NULL, SPRITE_PRIORITY(2), 80);
+-    DrawSprite(128, w->y4 >> 8, gUnk_09EF11AC[1], w->tiles7, w->palette3, NULL, SPRITE_PRIORITY(2), 80);
++    MENU_BAND(w->y3 >> 8, gUnk_09EF11AC[0], w->tiles7, w->palette3, SPRITE_PRIORITY(2), 80);
++    MENU_BAND(w->y4 >> 8, gUnk_09EF11AC[1], w->tiles7, w->palette3, SPRITE_PRIORITY(2), 80);
+     DrawTextSlots(16, w->nameY >> 8, w->textSlots, w->palette4, 50, w->textSlotCounts[0]);
+     TaskPoolDraw(&w->tasks);
+ }
  
  void MapSelect_3(MapSelectWork* w) {
      TaskPoolDestroy(&w->tasks);
 +#ifdef PLATFORM_VITA
-+    PortUiOverlay(-1);
++    PortUiClipRows(0, 0);
 +#endif
  
      if (w->kindEntries != NULL) {
@@ -1774,7 +2265,7 @@ index 69228f117..919bb4247 100644
          gVBlankHandlerOverride();
          return;
 diff --git a/src/map/map.c b/src/map/map.c
-index 2f82fd226..10effa10f 100644
+index 2f82fd226..a7ad692b3 100644
 --- a/src/map/map.c
 +++ b/src/map/map.c
 @@ -1,3 +1,7 @@
@@ -1785,7 +2276,43 @@ index 2f82fd226..10effa10f 100644
  #include "system_state.h"
  #include "monsgage.h"
  #include "map.h"
-@@ -4715,9 +4719,16 @@ s32 Task_MapRnd_1(MapRndWork* w) {
+@@ -59,6 +63,7 @@
+ #include "text_types.h"
+ #include "types.h"
+ #include <stddef.h>
++#include "wide_layout.h"
+ 
+ extern u8 gSoraWorldBattleBase[];
+ extern u8 gRikuWorldBattleBase[];
+@@ -2809,6 +2814,15 @@ void MapFldShowWorldLogo() {
+ }
+ 
+ void MapFldMain() {
++#ifdef PLATFORM_VITA
++    /* Boss practice, from the port menu: starts like an encounter. */
++    if (PortBossFieldTick()) {
++        FadeStartOut(FADE_MODE_BLACK, 16);
++        FadeLock();
++        MapFldSetUpdateAndRun(MapFldStartBattle);
++        return;
++    }
++#endif
+     if (gMapRoomState->flags & ROOM_FLAG_START_BATTLE) {
+         FadeStartOut(FADE_MODE_BLACK, 16);
+         FadeLock();
+@@ -2924,6 +2938,11 @@ void MapFldStartBattle() {
+ 
+     if (FadeIsActive() == 0) {
+         RequestFieldResume();
++#ifdef PLATFORM_VITA
++        if (PortBossStart()) {
++            return;
++        }
++#endif
+ 
+         if (gGameState.flags & GAME_FLAG_RIKU) {
+             if (gGameState.progression.tutorialFlags & 0x1000) {
+@@ -4715,9 +4734,16 @@ s32 Task_MapRnd_1(MapRndWork* w) {
  
  void Task_MapRnd_2(MapRndWork* w) {
      TaskPoolDraw(&w->tasks);
@@ -1802,7 +2329,7 @@ index 2f82fd226..10effa10f 100644
      TaskPoolDestroy(&w->tasks);
      MapFreeRoom();
  }
-@@ -4886,11 +4897,18 @@ void Task_MapFix_2(MapFixWork* w) {
+@@ -4886,11 +4912,18 @@ void Task_MapFix_2(MapFixWork* w) {
      }
  
      TaskPoolDraw(&w->tasks);
@@ -1821,42 +2348,489 @@ index 2f82fd226..10effa10f 100644
      for (i = 0; i < w->colliderCount; i++) {
          ColliderUnregister(&w->colliders[i]);
      }
-@@ -5687,6 +5705,9 @@ s32 MapMenuResume(MapMenuWork* w) {
+@@ -5687,6 +5720,13 @@ s32 MapMenuResume(MapMenuWork* w) {
  void Task_MapMenu_0(MapMenuWork* w) {
      s8 v;
  
 +#ifdef PLATFORM_VITA
-+    PortWideMenu(1);
++    /* The work is not zeroed and panelsVisible is only set once the update
++     * function runs, but Task_MapMenu_1/_2 read it on the first frame: with a
++     * leftover nonzero value they animate and draw an uninitialized anim. On
++     * the GBA that reads junk; here it crashed after the first Riku fight. */
++    w->panelsVisible = 0;
 +#endif
      gFieldState->flags |= FIELD_FLAG_FREEZE_PLAYER;
      gFieldState->flags |= FIELD_FLAG_FREEZE_ENEMIES;
      gFieldState->flags |= FIELD_FLAG_MENU_OPEN;
-@@ -6028,6 +6049,9 @@ void Task_MapMenu_2(MapMenuWork* w) {
- void Task_MapMenu_3(MapMenuWork* w) {
-     s32 i;
+@@ -5733,11 +5773,11 @@ void Task_MapMenu_2(MapMenuWork* w) {
+     s32 k;
+ 
+ #ifdef VERSION_EU
+-    DrawSprite(128, w->y >> 8, gUnkEu_09F84738[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-    DrawSprite(128, w->y2 >> 8, gUnkEu_09F84738[1], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
++    MENU_BAND(w->y >> 8, gUnkEu_09F84738[0], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++    MENU_BAND(w->y2 >> 8, gUnkEu_09F84738[1], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
+ #else
+-    DrawSprite(128, w->y >> 8, gUnk_09EF8E74[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-    DrawSprite(128, w->y2 >> 8, gUnk_09EF8E74[1], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
++    MENU_BAND(w->y >> 8, gUnk_09EF8E74[0], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++    MENU_BAND(w->y2 >> 8, gUnk_09EF8E74[1], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
+ #endif
+ 
+     if (
+@@ -5761,112 +5801,112 @@ void Task_MapMenu_2(MapMenuWork* w) {
+ #ifdef VERSION_EU
+         switch (gLanguage) {
+         case LANGUAGE_SPANISH:
+-            DrawSprite(w->x >> 8, 0, gUnkEu_09F84720[0], w->tiles3, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++            DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnkEu_09F84720[0], w->tiles3, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+             break;
+         case LANGUAGE_ENGLISH:
+         case LANGUAGE_FRENCH:
+         case LANGUAGE_ITALIAN:
+-            DrawSprite(w->x >> 8, 0, gUnkEu_09F84718[0], w->tiles3, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++            DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnkEu_09F84718[0], w->tiles3, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+             break;
+         case LANGUAGE_GERMAN:
+         default:
+-            DrawSprite(w->x >> 8, 0, gUnkEu_09F84728[0], w->tiles3, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++            DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnkEu_09F84728[0], w->tiles3, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+             break;
+         }
+ #else
+-        DrawSprite(w->x >> 8, 0, gUnk_09EF8E6C[0], w->tiles3, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++        DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnk_09EF8E6C[0], w->tiles3, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+ #endif
+ #ifdef VERSION_EU
+-        DrawSprite(w->x2 >> 8, 14, gUnkEu_09F84730[0], w->tiles4, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
++        DrawSprite(MENU_RIGHT(w->x2 >> 8), 14, gUnkEu_09F84730[0], w->tiles4, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+ #else
+-        DrawSprite(w->x2 >> 8, 14, gUnk_09EF8E64[0], w->tiles4, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
++        DrawSprite(MENU_RIGHT(w->x2 >> 8), 14, gUnk_09EF8E64[0], w->tiles4, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+ #endif
+ 
+         if (gGameState.flags & GAME_FLAG_RIKU) {
+ #ifdef VERSION_EU
+             switch (gLanguage) {
+             case LANGUAGE_ENGLISH:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84560[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84560[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F84560[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84560[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84560[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F84560[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_FRENCH:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84574[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84574[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F84574[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84574[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84574[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F84574[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_SPANISH:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84588[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84588[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F84588[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84588[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84588[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F84588[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_ITALIAN:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F8459C[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F8459C[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F8459C[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F8459C[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F8459C[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F8459C[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_GERMAN:
+             default:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F845B0[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F845B0[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F845B0[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F845B0[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F845B0[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F845B0[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             }
+ #else
+-            DrawSprite(w->x3 >> 8, 0, gUnk_09EF8E80[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-            DrawSprite(w->x3 >> 8, 0, gUnk_09EF8E80[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-            DrawSprite(w->x4 >> 8, 103, gUnk_09EF8E80[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++            DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnk_09EF8E80[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++            DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnk_09EF8E80[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++            DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnk_09EF8E80[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                 81);
+ #endif
+ 
+             if (w->tiles9[0] != NULL) {
+-                DrawSprite((w->x4 >> 8) + 18, 124, w->gfx[0], w->tiles9[0],
++                DrawSprite((MENU_RIGHT(w->x4 >> 8)) + 18, 124, w->gfx[0], w->tiles9[0],
+                     w->palette9[0], NULL, SPRITE_PRIORITY(1), 80);
+             }
+         } else {
+ #ifdef VERSION_EU
+             switch (gLanguage) {
+             case LANGUAGE_ENGLISH:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F844FC[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F844FC[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F844FC[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F844FC[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F844FC[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F844FC[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_FRENCH:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84510[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84510[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F84510[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84510[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84510[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F84510[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_SPANISH:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84524[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84524[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F84524[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84524[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84524[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F84524[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_ITALIAN:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84538[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F84538[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F84538[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84538[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F84538[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F84538[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_GERMAN:
+             default:
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F8454C[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-                DrawSprite(w->x3 >> 8, 0, gUnkEu_09F8454C[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x4 >> 8, 103, gUnkEu_09F8454C[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F8454C[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++                DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnkEu_09F8454C[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++                DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnkEu_09F8454C[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             }
+ #else
+-            DrawSprite(w->x3 >> 8, 0, gUnk_09EF8E0C[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
+-            DrawSprite(w->x3 >> 8, 0, gUnk_09EF8E0C[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
+-            DrawSprite(w->x4 >> 8, 103, gUnk_09EF8E0C[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++            DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnk_09EF8E0C[0], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 80);
++            DrawSprite(MENU_RIGHT(w->x3 >> 8), 0, gUnk_09EF8E0C[1], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1), 81);
++            DrawSprite(MENU_RIGHT(w->x4 >> 8), 103, gUnk_09EF8E0C[2], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                 81);
+ #endif
+ 
+@@ -5874,7 +5914,7 @@ void Task_MapMenu_2(MapMenuWork* w) {
+                 k = i * 20 + 14;
+ 
+                 if (w->tiles9[i] != NULL) {
+-                    DrawSprite((w->x4 >> 8) + k, 124, w->gfx[i], w->tiles9[i],
++                    DrawSprite((MENU_RIGHT(w->x4 >> 8)) + k, 124, w->gfx[i], w->tiles9[i],
+                         w->palette9[i], NULL, SPRITE_PRIORITY(1), 80);
+                 }
+             }
+@@ -5884,32 +5924,32 @@ void Task_MapMenu_2(MapMenuWork* w) {
+ #ifdef VERSION_EU
+             switch (gLanguage) {
+             case LANGUAGE_ENGLISH:
+-                DrawSprite(w->x5 >> 8, 144, gUnkEu_09F844FC[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x5 >> 8), 144, gUnkEu_09F844FC[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_FRENCH:
+-                DrawSprite(w->x5 >> 8, 144, gUnkEu_09F84510[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x5 >> 8), 144, gUnkEu_09F84510[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_SPANISH:
+-                DrawSprite(w->x5 >> 8, 144, gUnkEu_09F84524[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x5 >> 8), 144, gUnkEu_09F84524[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_ITALIAN:
+-                DrawSprite(w->x5 >> 8, 144, gUnkEu_09F84538[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x5 >> 8), 144, gUnkEu_09F84538[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             case LANGUAGE_GERMAN:
+             default:
+-                DrawSprite(w->x5 >> 8, 144, gUnkEu_09F8454C[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_RIGHT(w->x5 >> 8), 144, gUnkEu_09F8454C[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                     81);
+                 break;
+             }
+ #else
+-            DrawSprite(w->x5 >> 8, 144, gUnk_09EF8E0C[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
++            DrawSprite(MENU_RIGHT(w->x5 >> 8), 144, gUnk_09EF8E0C[3], w->tiles5, w->palette3, NULL, SPRITE_PRIORITY(1),
+                 81);
+ #endif
+-            DrawTextSlots((w->x5 >> 8) + 16, 145, w->textSlots, w->palette8, 50,
++            DrawTextSlots((MENU_RIGHT(w->x5 >> 8)) + 16, 145, w->textSlots, w->palette8, 50,
+                 w->textSlotCount);
+         }
+ 
+@@ -5917,48 +5957,48 @@ void Task_MapMenu_2(MapMenuWork* w) {
+         switch (gLanguage) {
+         case LANGUAGE_ENGLISH:
+             if (w->cursorVisible != 0) {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F845C4[w->cursor], w->tiles6, w->palette5, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F845C4[w->cursor], w->tiles6, w->palette5, NULL,
+                     SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F84678[w->cursor], w->tiles6, w->palette4, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F84678[w->cursor], w->tiles6, w->palette4, NULL,
+                     SPRITE_PRIORITY(1), 81);
+             } else {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F845C4[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F845C4[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
+                     80);
+             }
+ 
+             break;
+         case LANGUAGE_FRENCH:
+             if (w->cursorVisible != 0) {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F845E8[w->cursor], w->tiles6, w->palette5, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F845E8[w->cursor], w->tiles6, w->palette5, NULL,
+                     SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F84698[w->cursor], w->tiles6, w->palette4, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F84698[w->cursor], w->tiles6, w->palette4, NULL,
+                     SPRITE_PRIORITY(1), 81);
+             } else {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F845E8[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F845E8[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
+                     80);
+             }
+ 
+             break;
+         case LANGUAGE_SPANISH:
+             if (w->cursorVisible != 0) {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F8460C[w->cursor], w->tiles6, w->palette5, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F8460C[w->cursor], w->tiles6, w->palette5, NULL,
+                     SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F846B8[w->cursor], w->tiles6, w->palette4, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F846B8[w->cursor], w->tiles6, w->palette4, NULL,
+                     SPRITE_PRIORITY(1), 81);
+             } else {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F8460C[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F8460C[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
+                     80);
+             }
+ 
+             break;
+         case LANGUAGE_ITALIAN:
+             if (w->cursorVisible != 0) {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F84630[w->cursor], w->tiles6, w->palette5, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F84630[w->cursor], w->tiles6, w->palette5, NULL,
+                     SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F846D8[w->cursor], w->tiles6, w->palette4, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F846D8[w->cursor], w->tiles6, w->palette4, NULL,
+                     SPRITE_PRIORITY(1), 81);
+             } else {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F84630[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F84630[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
+                     80);
+             }
+ 
+@@ -5966,12 +6006,12 @@ void Task_MapMenu_2(MapMenuWork* w) {
+         case LANGUAGE_GERMAN:
+         default:
+             if (w->cursorVisible != 0) {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F84654[w->cursor], w->tiles6, w->palette5, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F84654[w->cursor], w->tiles6, w->palette5, NULL,
+                     SPRITE_PRIORITY(1), 81);
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F846F8[w->cursor], w->tiles6, w->palette4, NULL,
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F846F8[w->cursor], w->tiles6, w->palette4, NULL,
+                     SPRITE_PRIORITY(1), 81);
+             } else {
+-                DrawSprite(w->x6 >> 8, 26, gUnkEu_09F84654[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
++                DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnkEu_09F84654[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
+                     80);
+             }
+ 
+@@ -5979,12 +6019,12 @@ void Task_MapMenu_2(MapMenuWork* w) {
+         }
+ #else
+         if (w->cursorVisible != 0) {
+-            DrawSprite(w->x6 >> 8, 26, gUnk_09EF8E20[w->cursor], w->tiles6, w->palette5, NULL,
++            DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnk_09EF8E20[w->cursor], w->tiles6, w->palette5, NULL,
+                 SPRITE_PRIORITY(1), 81);
+-            DrawSprite(w->x6 >> 8, 26, gUnk_09EF8E44[w->cursor], w->tiles6, w->palette4, NULL,
++            DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnk_09EF8E44[w->cursor], w->tiles6, w->palette4, NULL,
+                 SPRITE_PRIORITY(1), 81);
+         } else {
+-            DrawSprite(w->x6 >> 8, 26, gUnk_09EF8E20[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
++            DrawSprite(MENU_LEFT(w->x6 >> 8), 26, gUnk_09EF8E20[7], w->tiles6, w->palette5, NULL, SPRITE_PRIORITY(1),
+                 80);
+         }
+ #endif
+@@ -6004,7 +6044,7 @@ void Task_MapMenu_2(MapMenuWork* w) {
+             case 0:
+             default:
+                 ApproachValueHalf(&w->y3, (w->cursor * 19 + 16) << 8);
+-                DrawSprite(24, w->y3 >> 8, AnimGetGfx(&w->anim), w->tiles, w->palette, NULL,
++                DrawSprite(MENU_LEFT(24), w->y3 >> 8, AnimGetGfx(&w->anim), w->tiles, w->palette, NULL,
+                     SPRITE_PRIORITY(1) | SPRITE_FLAG_HFLIP, 60);
+                 break;
+             }
+@@ -6224,10 +6264,10 @@ s32 MapSaveSlideInX(MapSaveWork* w) {
+         ApproachValue(&w->x, 0, w->steps);
+ 
+         if (gGameState.flags & GAME_FLAG_RIKU) {
+-            ApproachValue(&w->x3, 0x3800, w->steps);
++            ApproachValue(&w->x3, MENU_LEFT_FX(0x3800), w->steps);
+             ApproachValue(&w->y3, 0x7000, w->steps);
+         } else {
+-            ApproachValue(&w->x3, 0x3800, w->steps);
++            ApproachValue(&w->x3, MENU_LEFT_FX(0x3800), w->steps);
+             ApproachValue(&w->y3, 0x7000, w->steps);
+         }
+ 
+@@ -6293,7 +6333,14 @@ s32 MapSaveSlideInX(MapSaveWork* w) {
+             }
+         }
  
 +#ifdef PLATFORM_VITA
-+    PortWideMenu(-1);
++        /* The file panel moves into the right margin with the save menu's
++         * right column (SAVE_RIGHT), and that margin shows it. */
++        SetBgScroll(0, -SAVE_SHIFT, 0xFFFB);
++        PortBgMargins(0, PORT_MARGIN_RIGHT);
++#else
+         SetBgScroll(0, 0, 0xFFFB);
 +#endif
-     MapMenuSetCharaPalettesExcluded(w, 0);
-     MapMenuSetPanelPalettesExcluded(w, 0);
-     ReleaseObjPalette(w->palette2);
-@@ -6430,6 +6454,9 @@ s32 MapSaveSlideOutY(MapSaveWork* w) {
- }
+         w->tiles5 = AllocObjTiles(0x280, gDonaFl00Tiles);
+         w->tiles6 = AllocObjTiles(0x400, gGoofyFl00Tiles);
+         w->palette3 = LoadObjPalette(gUnk_09991D24, 32);
+@@ -6510,36 +6557,36 @@ void Task_MapSave_2(MapSaveWork* w) {
+ #ifdef VERSION_EU
+     switch (gLanguage) {
+     case LANGUAGE_ENGLISH:
+-        DrawSprite(128, w->y >> 8, gUnkEu_09F8447C[1], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(128, w->y2 >> 8, gUnkEu_09F8447C[2], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(w->x >> 8, 0, gUnkEu_09F8447C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++        MENU_BAND(w->y >> 8, gUnkEu_09F8447C[1], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        MENU_BAND(w->y2 >> 8, gUnkEu_09F8447C[2], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnkEu_09F8447C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+         break;
+     case LANGUAGE_FRENCH:
+-        DrawSprite(128, w->y >> 8, gUnk_09EF8D8C[1], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(128, w->y2 >> 8, gUnk_09EF8D8C[2], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(w->x >> 8, 0, gUnk_09EF8D8C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++        MENU_BAND(w->y >> 8, gUnk_09EF8D8C[1], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        MENU_BAND(w->y2 >> 8, gUnk_09EF8D8C[2], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnk_09EF8D8C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+         break;
+     case LANGUAGE_SPANISH:
+-        DrawSprite(128, w->y >> 8, gUnkEu_09F8444C[1], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(128, w->y2 >> 8, gUnkEu_09F8444C[2], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(w->x >> 8, 0, gUnkEu_09F8444C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++        MENU_BAND(w->y >> 8, gUnkEu_09F8444C[1], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        MENU_BAND(w->y2 >> 8, gUnkEu_09F8444C[2], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnkEu_09F8444C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+         break;
+     case LANGUAGE_ITALIAN:
+-        DrawSprite(128, w->y >> 8, gUnkEu_09F8445C[1], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(128, w->y2 >> 8, gUnkEu_09F8445C[2], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(w->x >> 8, 0, gUnkEu_09F8445C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++        MENU_BAND(w->y >> 8, gUnkEu_09F8445C[1], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        MENU_BAND(w->y2 >> 8, gUnkEu_09F8445C[2], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnkEu_09F8445C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+         break;
+     case LANGUAGE_GERMAN:
+     default:
+-        DrawSprite(128, w->y >> 8, gUnkEu_09F8446C[1], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(128, w->y2 >> 8, gUnkEu_09F8446C[2], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawSprite(w->x >> 8, 0, gUnkEu_09F8446C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++        MENU_BAND(w->y >> 8, gUnkEu_09F8446C[1], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        MENU_BAND(w->y2 >> 8, gUnkEu_09F8446C[2], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++        DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnkEu_09F8446C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+         break;
+     }
+ #else
+-    DrawSprite(128, w->y >> 8, gUnk_09EF8D8C[1], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-    DrawSprite(128, w->y2 >> 8, gUnk_09EF8D8C[2], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 90);
+-    DrawSprite(w->x >> 8, 0, gUnk_09EF8D8C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
++    MENU_BAND(w->y >> 8, gUnk_09EF8D8C[1], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++    MENU_BAND(w->y2 >> 8, gUnk_09EF8D8C[2], w->tiles2, w->palette2, SPRITE_PRIORITY(1), 90);
++    DrawSprite(MENU_LEFT(w->x >> 8), 0, gUnk_09EF8D8C[0], w->tiles2, w->palette2, NULL, SPRITE_PRIORITY(1), 80);
+ #endif
  
- void Task_MapSave_0(MapSaveWork* w) {
-+#ifdef PLATFORM_VITA
-+    PortWideMenu(1);
-+#endif
-     gFieldState->flags |= FIELD_FLAG_FREEZE_PLAYER;
-     gFieldState->flags |= FIELD_FLAG_FREEZE_ENEMIES;
-     gMapRoomState->flags |= ROOM_FLAG_SAVE_MENU_OPEN;
-@@ -6599,6 +6626,9 @@ void Task_MapSave_2(MapSaveWork* w) {
+     if (gMapRoomState->flags & ROOM_FLAG_HIDE_PLAYER) {
+@@ -6554,42 +6601,42 @@ void Task_MapSave_2(MapSaveWork* w) {
+ 
+     if (w->dialogVisible != 0) {
+         if (!(gGameState.flags & GAME_FLAG_RIKU)) {
+-            DrawSprite(72, 96, gDonaFl00Frames[0], w->tiles5, w->palette6, NULL, SPRITE_PRIORITY(1) | SPRITE_FLAG_HFLIP, 81);
+-            DrawSprite(40, 96, gGoofyFl00Frames[0], w->tiles6, w->palette7, NULL, SPRITE_PRIORITY(1), 81);
++            DrawSprite(MENU_LEFT(72), 96, gDonaFl00Frames[0], w->tiles5, w->palette6, NULL, SPRITE_PRIORITY(1) | SPRITE_FLAG_HFLIP, 81);
++            DrawSprite(MENU_LEFT(40), 96, gGoofyFl00Frames[0], w->tiles6, w->palette7, NULL, SPRITE_PRIORITY(1), 81);
+         }
+ 
+-        DrawSprite(0, 16, gMapUiSpriteUs_098A8F28, w->tiles3, w->palette3, NULL, SPRITE_PRIORITY(1), 90);
+-        DrawTextSlots(100, 59, w->textSlots, w->palette4, 50, w->textSlotCount);
++        DrawSprite(MENU_LEFT(0), 16, gMapUiSpriteUs_098A8F28, w->tiles3, w->palette3, NULL, SPRITE_PRIORITY(1), 90);
++        DrawTextSlots(SAVE_RIGHT(100), 59, w->textSlots, w->palette4, 50, w->textSlotCount);
+ 
+         if (w->confirmCursor != 0) {
+ #ifdef VERSION_EU
+-            DrawTextSlots(166 - (GetTextSlotsWidth(w->textSlots2, w->textSlotCount2) >> 1), 92, w->textSlots2, w->palette8, 50, w->textSlotCount2);
++            DrawTextSlots(SAVE_RIGHT(166 - (GetTextSlotsWidth(w->textSlots2, w->textSlotCount2) >> 1)), 92, w->textSlots2, w->palette8, 50, w->textSlotCount2);
+ #elif defined(VERSION_JP)
+-            DrawTextSlots(129, 92, w->textSlots2, w->palette8, 50, w->textSlotCount2);
++            DrawTextSlots(SAVE_RIGHT(129), 92, w->textSlots2, w->palette8, 50, w->textSlotCount2);
+ #else
+-            DrawTextSlots(124, 92, w->textSlots2, w->palette8, 50, w->textSlotCount2);
++            DrawTextSlots(SAVE_RIGHT(124), 92, w->textSlots2, w->palette8, 50, w->textSlotCount2);
+ #endif
+-            DrawTextSlots(128, 114, w->textSlots3, w->palette8, 50, w->textSlotCount3);
+-            DrawTextSlots(184, 114, w->textSlots4, w->palette8, 50, w->textSlotCount4);
++            DrawTextSlots(SAVE_RIGHT(128), 114, w->textSlots3, w->palette8, 50, w->textSlotCount3);
++            DrawTextSlots(SAVE_RIGHT(184), 114, w->textSlots4, w->palette8, 50, w->textSlotCount4);
+         } else {
+ #ifdef VERSION_EU
+-            DrawTextSlots(166 - (GetTextSlotsWidth(w->textSlots2, w->textSlotCount2) >> 1), 102, w->textSlots2, w->palette8, 50, w->textSlotCount2);
++            DrawTextSlots(SAVE_RIGHT(166 - (GetTextSlotsWidth(w->textSlots2, w->textSlotCount2) >> 1)), 102, w->textSlots2, w->palette8, 50, w->textSlotCount2);
+ #elif defined(VERSION_JP)
+-            DrawTextSlots(129, 103, w->textSlots2, w->palette8, 50, w->textSlotCount2);
++            DrawTextSlots(SAVE_RIGHT(129), 103, w->textSlots2, w->palette8, 50, w->textSlotCount2);
+ #else
+-            DrawTextSlots(130, 102, w->textSlots2, w->palette8, 50, w->textSlotCount2);
++            DrawTextSlots(SAVE_RIGHT(130), 102, w->textSlots2, w->palette8, 50, w->textSlotCount2);
+ #endif
+         }
+ 
+         switch (w->confirmCursor) {
+         case 1:
+             ApproachValueHalf(&w->x2, 0x7800);
+-            DrawSprite(w->x2 >> 8, 110, AnimGetGfx(&w->anim), w->tiles, w->palette, NULL, SPRITE_FLAG_HFLIP,
++            DrawSprite(SAVE_RIGHT(w->x2 >> 8), 110, AnimGetGfx(&w->anim), w->tiles, w->palette, NULL, SPRITE_FLAG_HFLIP,
+                 40);
+             break;
+         case 2:
+             ApproachValueHalf(&w->x2, 0xB000);
+-            DrawSprite(w->x2 >> 8, 110, AnimGetGfx(&w->anim), w->tiles, w->palette, NULL, SPRITE_FLAG_HFLIP,
++            DrawSprite(SAVE_RIGHT(w->x2 >> 8), 110, AnimGetGfx(&w->anim), w->tiles, w->palette, NULL, SPRITE_FLAG_HFLIP,
+                 40);
+             break;
+         }
+@@ -6599,6 +6646,9 @@ void Task_MapSave_2(MapSaveWork* w) {
  void Task_MapSave_3(MapSaveWork* w) {
      u32 f;
  
 +#ifdef PLATFORM_VITA
-+    PortWideMenu(-1);
++    PortBgMargins(0, 0);
 +#endif
      MapSaveSetCharaPalettesExcluded(w, 0);
      ReleaseObjPalette(w->palette2);

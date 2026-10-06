@@ -259,12 +259,8 @@ def write_romxlate(path, version, gba_objs, aliases):
     return linked
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--version", choices=VERSIONS, default="us")
-    parser.add_argument("--vitasdk", default=os.environ.get("VITASDK", str(Path.home() / "Developer/vitasdk")))
-    args = parser.parse_args()
-    version = args.version
+def configure_version(version, args):
+    """Writes build.vita.<version>.ninja; returns the files the VPK takes from it."""
     gba_build = f"build/{version}"
     out_dir = Path(f"build/vita/{version}")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -330,7 +326,7 @@ def main():
     port_version = Path("port/vita/VERSION").read_text().strip()
     major, minor, patch_level = port_version.split(".")
     vd = f"-DVERSION_{version.upper()} -DPORT_VERSION=\\\"{port_version}\\\""
-    with open("build.vita.ninja", "w") as f:
+    with open(f"build.vita.{version}.ninja", "w") as f:
         n = ninja_syntax.Writer(f)
         n.variable("ninja_required_version", "1.3")
         n.variable("builddir", str(out_dir))
@@ -431,7 +427,7 @@ def main():
         velf = str(out_dir / "khcom.velf")
         eboot = str(out_dir / "eboot.bin")
         sfo = str(out_dir / "param.sfo")
-        vpk = f"build/vita/khcom_{version}_v{port_version}.vpk"
+        vpk = None
         # Relink when vitaGL is rebuilt (e.g. with or without its splash screen).
         n.build(elf, "link", objs, implicit=[str(Path(args.vitasdk) / "arm-vita-eabi/lib/libvitaGL.a")],
                 variables={"libs": " ".join(libs)})
@@ -461,18 +457,55 @@ def main():
                 variables={"outdir": str(out_dir / "sce_sys")})
         extra = [f"-a {o}={p.relative_to('port/vita')}" for p, o in zip(sce_src, sce_out)]
         extra.append(f"-a {rommap}=rommap.bin")
-        n.build(vpk, "vpk", [eboot, sfo], implicit=sce_out + [rommap],
-                variables={"sfo": sfo, "eboot": eboot, "extra": " ".join(extra)})
+        n.build(f"eboot_{version}", "phony", [eboot, rommap])
+
+    return {"eboot": eboot, "sfo": sfo, "rommap": rommap, "sce": list(zip(sce_src, sce_out)),
+            "units": f"config/{version}/units.txt", "vpk": vpk}
+
+
+def main():
+    """One VPK for every version whose ROM is in roms/: the USA executable
+    starts and hands over to eboot_eu.self for the European ROM
+    (port/vita/host/vita_rom.c)."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vitasdk", default=os.environ.get("VITASDK", str(Path.home() / "Developer/vitasdk")))
+    args = parser.parse_args()
+    versions = [v for v in ("us", "eu") if Path(f"roms/{VERSIONS[v]}.gba").exists()]
+    if "us" not in versions:
+        sys.exit("error: roms/B8CE.gba (USA) is required; the European ROM (roms/B8CP.gba) is optional")
+    parts = {v: configure_version(v, args) for v in versions}
+    sdk_bin = Path(args.vitasdk) / "bin"
+    port_version = Path("port/vita/VERSION").read_text().strip()
+    us = parts["us"]
+    vpk = f"build/vita/khcom_v{port_version}.vpk"
+    with open("build.vita.ninja", "w") as f:
+        n = ninja_syntax.Writer(f)
+        n.variable("ninja_required_version", "1.3")
+        n.variable("sdkbin", str(sdk_bin))
+        for v in versions:
+            n.subninja(f"build.vita.{v}.ninja")
+        n.rule("vpk", "$sdkbin/vita-pack-vpk -s $sfo -b $eboot $extra $out", description="VPK $out")
+        # Everything at the root: the USA executable, LiveArea and ROM map, and
+        # each other version's executable (eboot_<v>.self, started with
+        # sceAppMgrLoadExec, which refuses SELF paths in subfolders) and ROM map
+        # (rommap_<v>.bin).
+        extra = [f"-a {o}={p.relative_to('port/vita')}" for p, o in us["sce"]]
+        extra.append(f"-a {us['rommap']}=rommap.bin")
+        implicit = [o for _p, o in us["sce"]] + [us["rommap"]]
+        for v in versions:
+            if v != "us":
+                extra += [f"-a {parts[v]['eboot']}=eboot_{v}.self", f"-a {parts[v]['rommap']}=rommap_{v}.bin"]
+                implicit += [parts[v]["eboot"], parts[v]["rommap"]]
+        n.build(vpk, "vpk", [us["eboot"], us["sfo"]], implicit=implicit,
+                variables={"sfo": us["sfo"], "eboot": us["eboot"], "extra": " ".join(extra)})
         n.build("vpk", "phony", vpk)
         # Re-run this script when the version or the script itself changes.
-        n.rule("configure", "python3 tools/vita/configure_vita.py --version $version",
-               generator=True, description="CONFIGURE")
+        n.rule("configure", "python3 tools/vita/configure_vita.py", generator=True, description="CONFIGURE")
         n.build("build.vita.ninja", "configure",
-                implicit=["tools/vita/configure_vita.py", "port/vita/VERSION", "config/" + version + "/units.txt"],
-                variables={"version": version})
+                implicit=["tools/vita/configure_vita.py", "port/vita/VERSION"] + [parts[v]["units"] for v in versions])
         n.default("vpk")
 
-    print(f"configured Vita build for {version}; run: ninja -f build.vita.ninja")
+    print(f"configured Vita build for {', '.join(versions)}; run: ninja -f build.vita.ninja")
 
 
 if __name__ == "__main__":

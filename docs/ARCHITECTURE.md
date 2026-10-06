@@ -58,7 +58,7 @@ The game's code calls GBA hardware and BIOS functions; these files provide them 
 
 | File | Role |
 |---|---|
-| `configure_vita.py` | Generates `build.vita.ninja`: which units to compile, flags, section layout, the whole pipeline up to the VPK. |
+| `configure_vita.py` | Generates `build.vita.us.ninja` (and `build.vita.eu.ninja` when `roms/B8CP.gba` exists) and the top-level `build.vita.ninja`: which units to compile, flags, section layout, the whole pipeline up to the one VPK. |
 | `check_gba_match.sh` | Builds the GBA ROM from the same tree and checks it is byte-identical to the original. Run after touching decomp code. |
 | `strip_rom_data.py` | After linking: zeroes every byte that comes from the ROM and writes `rommap.bin`. |
 | `audit_rom_free.py` | Fails the build if pieces of the ROM can still be found in the executable. |
@@ -115,6 +115,15 @@ The game's graphics, text, music, movies and constant tables are not in the VPK:
 - **Audit** (`audit_rom_free.py`): the build fails if ROM samples are still found in the executable.
 - **Startup** (`vita_rom.c`): reads `ux0:data/khcom/rom.gba`, checks the SHA-1, copies every run back
   (adjusting for where the module was loaded), then starts the game.
+
+## USA and European versions
+
+The decomp's differences between versions are compile-time (`VERSION_EU`), so the VPK carries one
+executable per version, built from the same sources: `eboot.bin` + `rommap.bin` (USA) and `eboot_eu.self` +
+`rommap_eu.bin` (Europe), all at the root (`sceAppMgrLoadExec` refuses SELF paths in subfolders). The USA
+executable starts; when the ROM it finds is the European one it starts `app0:/eboot_eu.self`. The European
+version saves to `khcom_eu*.sav`; `config.ini` is shared. Check decomp changes against both ROMs
+(`check_gba_match.sh us` / `eu`).
 
 ## Conventions
 

@@ -19,9 +19,13 @@ enum {
 /* Pixel-art upscalers applied when presenting the frame (vita_video.c). */
 enum {
     UPSCALE_OFF,
+    UPSCALE_SCALE2X,
     UPSCALE_SCALE3X,
+    UPSCALE_MMPX,
     UPSCALE_COUNT,
 };
+/* How much each upscaler enlarges: 3 for Scale3x, 2 for the others. */
+#define UPSCALE_FACTOR(mode) ((mode) == UPSCALE_SCALE3X ? 3 : 2)
 
 typedef struct PortConfig {
     int display;
@@ -29,13 +33,15 @@ typedef struct PortConfig {
     int swapAB;
     /* Picture enhancements (Start + L + R menu, vita_menu.c). */
     int upscale;  /* UPSCALE_* */
+    int upscaleTarget; /* UPSCALE_TARGET_* */
     int sharp;    /* sharp bilinear: even, crisp pixels (when upscale is off) */
     int gbaColors;/* GBA LCD colour correction */
     /* Control additions (Start + L + R menu, controls tab; vita_input.c). */
-    int touchUnstock;  /* rear touch held 1 s: stocked cards back to the hand */
+    int touchUnstock;  /* TOUCH_UNSTOCK_*: rear touch returns the stocked cards to the hand */
+    int unstockHold;   /* 0-3: hold the rear touch / right stick down 0.5, 1, 1.5 or 2 s */
     int squareDodge;   /* Square: dodge roll */
     int triangleLR;    /* Triangle: L + R (stock a card / sleight) */
-    int rightStick;    /* right stick: L / R / L + R, down held 1 s unstocks */
+    int rightStick;    /* right stick: L / R / L + R, down held unstocks */
     /* Game options (menu, game tab). */
     int fieldHud;      /* HP display while exploring the map (src/btl/btl2.c) */
     int saveBank;      /* 1..SAVE_BANKS: which save file holds the game's two slots */
@@ -58,14 +64,28 @@ void PortSaveConfig(void);
 void RenderInit(int width);
 /* Scale3x of rows [y0, y1) of a w x h frame into a 3w x 3h one, dstStride
  * pixels per line (scale3x.c). */
-void Scale3xRows(const uint32_t* src, int w, int h, uint32_t* dst, int dstStride, int y0, int y1);
+void Scale3xRows(const uint32_t* src, const uint8_t* mask, int target, int w, int h, uint32_t* dst, int dstStride,
+                 int y0, int y1);
+/* Scale2x of rows [y0, y1) into a 2w x 2h frame (scale2x.c). */
+void Scale2xRows(const uint32_t* src, const uint8_t* mask, int target, int w, int h, uint32_t* dst, int dstStride,
+                 int y0, int y1);
+/* MMPX of rows [y0, y1) into a 2w x 2h frame (mmpx.c). */
+void Mmpx2xRows(const uint32_t* src, const uint8_t* mask, int target, int w, int h, uint32_t* dst, int dstStride,
+                int y0, int y1);
+/* What the upscaler smooths: everything, or only the pixels where a sprite is
+ * (or is not) in front, per the renderer's mask; the rest stays sharp. */
+enum { UPSCALE_TARGET_ALL, UPSCALE_TARGET_SPRITES, UPSCALE_TARGET_SCENERY, UPSCALE_TARGET_COUNT };
+/* Whether pixel i is one the upscaler leaves alone. */
+#define UPSCALE_SKIP(mask, target, i) \
+    ((target) != UPSCALE_TARGET_ALL && (((mask)[i] != 0) != ((target) == UPSCALE_TARGET_SPRITES)))
 /* Scale3x frames go straight into these textures' memory (vita_video.c). */
 #define SCALED_SLOTS 4
 void RenderSetScaledSlots(uint32_t* const data[SCALED_SLOTS], int stride);
-/* Returns the latest frame and sets *slot to the texture slot holding its
- * Scale3x, or -1 when the upscaler is off, and *wide when it is a menu to
- * stretch to the whole screen; valid until RenderUnlockFront. */
-const uint32_t* RenderLockFront(int* slot, int* wide);
+/* Returns the latest frame and sets *slot to the texture slot holding it
+ * enlarged by *factor (UPSCALE_FACTOR; the slots are sized for 3x), or -1
+ * when the upscaler is off, and *wide when it is a menu to stretch to the
+ * whole screen; valid until RenderUnlockFront. */
+const uint32_t* RenderLockFront(int* slot, int* factor, int* wide);
 void RenderUnlockFront(void);
 extern volatile uint32_t gPortRenderUs;
 extern volatile uint32_t gPortScaleUs;
@@ -88,7 +108,11 @@ void VideoSetNotice(const uint32_t* rgba, int changed);
 void VideoSetUnstockBar(int x0, int x1, int y, float progress);
 void NoticeUpdate(void);
 int InputUnstockHoldFrames(void);
-#define UNSTOCK_HOLD_FRAMES 60
+/* How the rear touch unstocks: held (unstockHold), tapped twice within half a
+ * second, or both. */
+enum { TOUCH_UNSTOCK_OFF, TOUCH_UNSTOCK_HOLD, TOUCH_UNSTOCK_DOUBLE_TAP, TOUCH_UNSTOCK_BOTH, TOUCH_UNSTOCK_COUNT };
+#define UNSTOCK_HOLD_STEPS 4
+#define UNSTOCK_HOLD_FRAMES ((gPortConfig.unstockHold + 1) * 30)
 
 /* Text on RGBA canvases, cw x ch pixels (vita_text.c). Characters are
  * 6 x 8 cells at scale 1. */

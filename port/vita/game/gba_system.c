@@ -260,7 +260,8 @@ static void LZ77UnComp(const void* srcp, void* dstp) {
     }
 }
 
-void LZ77UnCompWram(const void* src, void* dst) {
+/* Declared without const in the EU headers (gba/syscall.h). */
+void LZ77UnCompWram(void* src, void* dst) {
     LZ77UnComp(src, dst);
 }
 

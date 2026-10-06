@@ -15,6 +15,8 @@
 typedef struct PpuBgStream {
     int valid;
     int panel; /* a sliding panel (message box): see PortSetBgPanel */
+    int keepMargins; /* PORT_MARGIN_* sides drawn from the map (PortBgMargins) */
+    int split;       /* column the layer is split at for 16:9, or 0 (PortBgSplit) */
     int width, height; /* in 256x256-pixel blocks */
     int worldX, worldY; /* map position shown at screen (0,0) when the scroll registers equal the shadows */
     int shadowHofs, shadowVofs;
@@ -25,6 +27,7 @@ typedef struct PpuBgStream {
 typedef struct PpuFrame {
     PpuBgStream streams[4];
     int clipObjs; /* sprites only in the original 240 columns (PortUiOverlay) */
+    int clipY0, clipY1; /* ... on these rows only (PortUiClipRows) */
     int sceneMargins; /* margins in the scene's background colour (PortModeStart) */
     int wideMenu;     /* a menu, stretched to the whole screen (PortWideMenu) */
     uint8_t io[GBA_SCREEN_HEIGHT][PPU_LINE_IO_SIZE];
@@ -40,8 +43,11 @@ void PpuRenderFrame(const PpuFrame* frame);
 
 /* Split rendering: decode the frame once, then render line ranges (slices)
  * concurrently, each slice index on its own thread. */
-#define PPU_MAX_SLICES 2
+#define PPU_MAX_SLICES 3
 void PpuPrepareFrame(const PpuFrame* frame);
+/* Where to record, per output pixel, whether a sprite is in front (same
+ * pitch as the output), or NULL. */
+void PpuSetMask(uint8_t* mask);
 void PpuRenderSlice(const PpuFrame* frame, int slice, int y0, int y1);
 
 #endif /* GUARD_PPU_H */

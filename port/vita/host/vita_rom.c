@@ -7,6 +7,7 @@
  * is the expected dump (SHA-1) and copies the runs back into place, before
  * any game code runs.
  */
+#include <psp2/appmgr.h>
 #include <psp2/apputil.h>
 #include <psp2/common_dialog.h>
 #include <psp2/io/dirent.h>
@@ -27,8 +28,31 @@
 
 #define ROM_DIR "ux0:data/khcom"
 #define ROM_PATH ROM_DIR "/rom.gba"
+/* Each version's map of the ROM data it needs (tools/vita/strip_rom_data.py),
+ * both at the root of the VPK. */
+#ifdef VERSION_EU
+#define MAP_PATH "app0:rommap_eu.bin"
+#else
 #define MAP_PATH "app0:rommap.bin"
-#define GAME_NAME "Kingdom Hearts: Chain of Memories (USA)"
+#endif
+#ifdef VERSION_EU
+#define GAME_NAME "Kingdom Hearts: Chain of Memories (Europe)"
+#else
+#define GAME_NAME "Kingdom Hearts: Chain of Memories (USA or Europe)"
+/*
+ * One VPK runs both versions: this (USA) executable starts, and when the ROM
+ * it finds is the European one it hands over to the European executable,
+ * built from the same sources with VERSION_EU (the decomp's differences
+ * between versions are decided at compile time). The USA ROM wins when both
+ * are in the folder.
+ */
+/* At the root of the VPK, named and addressed like RetroArch's cores (another
+ * SELF in the same app): "app0:eu/eboot.bin" was refused as an invalid SELF
+ * path (0x8080201E). */
+#define EU_EBOOT "app0:/eboot_eu.self"
+/* SHA-1 of the European ROM (B8CP). */
+static const uint8_t sEuSha1[20] = { 0x8d, 0xb7, 0x35, 0x86, 0xcd, 0xb1, 0x1b, 0x37, 0x95, 0x90, 0x7e, 0xde, 0xbf, 0x43, 0x22, 0x8d, 0xbc, 0xd3, 0xe6, 0xb2 };
+#endif
 
 typedef struct {
     char magic[4];
@@ -164,18 +188,48 @@ static uint8_t* ReadWhole(const char* path, uint32_t* size) {
     return buf;
 }
 
-/* Finds the ROM: rom.gba, or any .gba file in the folder with the right SHA-1. */
+#ifndef VERSION_EU
+/* The ROM in hand is the European one: run the European executable. */
+static void RunEuropean(uint8_t* rom, const char* path) {
+    int r;
+
+    free(rom);
+    PortLog("rom: %s is the European version, starting %s", path, EU_EBOOT);
+    r = sceAppMgrLoadExec(EU_EBOOT, NULL, NULL);
+    if (r < 0) {
+        PortLog("rom: %s refused (%08X), trying app0:eboot_eu.self", EU_EBOOT, r);
+        r = sceAppMgrLoadExec("app0:eboot_eu.self", NULL, NULL);
+    }
+    RomFail("Could not start the European version (%s, error %08X). Reinstall the VPK.", EU_EBOOT, r);
+}
+#endif
+
+/* Whether rom (size bytes, SHA-1 sha) is the ROM this executable is for. */
+static int RomMatches(const RomMapHeader* hdr, uint32_t size, const uint8_t* sha) {
+    return size == hdr->romSize && !memcmp(sha, hdr->sha1, 20);
+}
+
+/* Finds the ROM: rom.gba, or any .gba file in the folder with the right
+ * SHA-1 (the USA executable also accepts the European ROM, see EU_EBOOT). */
 static uint8_t* FindRom(const RomMapHeader* hdr, uint32_t* size) {
     uint8_t sha[20];
     uint8_t* rom = ReadWhole(ROM_PATH, size);
     SceUID dir;
     SceIoDirent ent;
+#ifndef VERSION_EU
+    char euPath[512] = "";
+#endif
 
     if (rom != NULL) {
         Sha1(rom, *size, sha);
-        if (*size == hdr->romSize && !memcmp(sha, hdr->sha1, 20)) {
+        if (RomMatches(hdr, *size, sha)) {
             return rom;
         }
+#ifndef VERSION_EU
+        if (!memcmp(sha, sEuSha1, 20)) {
+            RunEuropean(rom, ROM_PATH);
+        }
+#endif
         free(rom);
         RomFail("%s is not a copy of " GAME_NAME ", or it is modified or incomplete.\n\n"
                 "Dump your own cartridge and copy it there unchanged.", ROM_PATH);
@@ -195,15 +249,25 @@ static uint8_t* FindRom(const RomMapHeader* hdr, uint32_t* size) {
                 continue;
             }
             Sha1(rom, *size, sha);
-            if (*size == hdr->romSize && !memcmp(sha, hdr->sha1, 20)) {
+            if (RomMatches(hdr, *size, sha)) {
                 PortLog("rom: using %s", path);
                 sceIoDclose(dir);
                 return rom;
             }
+#ifndef VERSION_EU
+            if (!memcmp(sha, sEuSha1, 20)) {
+                snprintf(euPath, sizeof(euPath), "%s", path); /* kept looking for a USA ROM first */
+            }
+#endif
             free(rom);
         }
         sceIoDclose(dir);
     }
+#ifndef VERSION_EU
+    if (euPath[0] != 0) {
+        RunEuropean(NULL, euPath);
+    }
+#endif
     RomFail("The game data was not found.\n\nCopy your own dump of " GAME_NAME " to\n%s", ROM_PATH);
     return NULL;
 }
