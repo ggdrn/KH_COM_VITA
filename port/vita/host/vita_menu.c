@@ -11,7 +11,8 @@
  *             dimmed and skipped,
  *             X on a boss asks for the enemy level first: ORIGINAL (the
  *             story's strength) or 1 up to Sora's level,
- *   TUTORIALS the battle tutorials, replayed the same way.
+ *   EXTRAS    the battle tutorials and the staff roll of either story,
+ *             replayed the same way.
  *
  * The game is paused while it is open (it runs inside the frame wait, see
  * vita_main.c): the last frame stays on screen with the menu drawn over it,
@@ -46,7 +47,7 @@ static uint32_t sCanvas[MENU_W * MENU_H];
 
 enum { TAB_PICTURE, TAB_CONTROLS, TAB_GAME, TAB_BOSSES, TAB_TUTORIALS, TAB_COUNT };
 
-static const char* const sTabNames[TAB_COUNT] = { "PICTURE", "CONTROLS", "GAME", "BOSSES", "TUTORIALS" };
+static const char* const sTabNames[TAB_COUNT] = { "PICTURE", "CONTROLS", "GAME", "BOSSES", "EXTRAS" };
 
 /* The two practice tabs: lists of fights (boss_practice.c). */
 #define IS_PRACTICE_TAB(tab) ((tab) == TAB_BOSSES || (tab) == TAB_TUTORIALS)
@@ -216,7 +217,7 @@ static void DrawBosses(int px, int py, int pw, int ph, int selected, int tutoria
     int i, top;
 
     if (sBossCount == 0) {
-        DrawText(px + 24, py + 58, tutorials ? "NO TUTORIAL DONE YET" : "NO BOSS BEATEN YET", COL_DIM, 1);
+        DrawText(px + 24, py + 58, tutorials ? "NOTHING UNLOCKED YET" : "NO BOSS BEATEN YET", COL_DIM, 1);
     }
     /* Scrolls to keep the selection in view. */
     top = selected - BOSS_ROWS / 2;
@@ -245,15 +246,15 @@ static void DrawBosses(int px, int py, int pw, int ph, int selected, int tutoria
     }
     help = avail == PORT_BOSS_RIKU      ? "NOT AVAILABLE IN REVERSE/REBIRTH"
            : avail != PORT_BOSS_OK     ? "AVAILABLE WHILE EXPLORING A WORLD'S ROOMS"
-           : sBossCount > 0            ? (tutorials ? "X: REPLAY  (BACK HERE AFTER)" : "X: FIGHT  (NO XP OR REWARDS, BACK HERE AFTER)")
+           : sBossCount > 0            ? (tutorials ? "X: PLAY  (BACK HERE AFTER)" : "X: FIGHT  (NO XP OR REWARDS, BACK HERE AFTER)")
                                        : NULL;
     if (sPicking) {
         char line[64];
 
         if (sPickLevel == 0) {
-            snprintf(line, sizeof(line), "ENEMY LEVEL:  < ORIGINAL >   (SORA LV %d)", PortBossSoraLevel());
+            snprintf(line, sizeof(line), "ENEMY LEVEL:  < ORIGINAL >   (YOUR LV %d)", PortBossSoraLevel());
         } else {
-            snprintf(line, sizeof(line), "ENEMY LEVEL:  < LV %d >   (SORA LV %d)", sPickLevel, PortBossSoraLevel());
+            snprintf(line, sizeof(line), "ENEMY LEVEL:  < LV %d >   (YOUR LV %d)", sPickLevel, PortBossSoraLevel());
         }
         DrawText(px + 12, py + ph - 44, line, COL_SELECT, 1);
     } else if (help != NULL) {

@@ -971,7 +971,7 @@ index 5c7feb322..1df6387c2 100644
          if (GetSoraStockCount() <= 2) {
              work->timer++;
 diff --git a/src/card/card_battle.c b/src/card/card_battle.c
-index 7aa662205..360207f9f 100644
+index 7aa662205..e7fcc2eab 100644
 --- a/src/card/card_battle.c
 +++ b/src/card/card_battle.c
 @@ -30,6 +30,9 @@
@@ -1031,7 +1031,19 @@ index 7aa662205..360207f9f 100644
          default:
              sSoraCardRequest = 0;
              break;
-@@ -3333,6 +3355,12 @@ void ClearStockedCardSlots(CardBattleWork* w) {
+@@ -1337,6 +1359,11 @@ static void cardbattle_3(CardBattleWork* w) {
+     gCardBattleState = NULL;
+     ReleaseObjTiles(w->tiles);
+     ReleaseObjPalette(w->palette);
++#ifdef PLATFORM_VITA
++    /* As sRikuSelectedCard (card_battle_riku.c): no stale pointer into the
++     * destroyed cards for the next battle's early polls. */
++    sSoraSelectedCard = NULL;
++#endif
+ }
+ 
+ s32 UpdateSoraReloadDeal(CardBattleWork* w, Task* task) {
+@@ -3333,6 +3360,12 @@ void ClearStockedCardSlots(CardBattleWork* w) {
  
      for (i = 0; i < 4; i++) {
          c = w->slots[i];
@@ -1044,7 +1056,7 @@ index 7aa662205..360207f9f 100644
  
          // @bug? Should be slotCounts[i].
          for (j = 0; j < w->slotCounts[j]; j++) {
-@@ -5439,6 +5467,18 @@ void UpdateSoraReloadGauge(CardDisplayWork* p) {
+@@ -5439,6 +5472,18 @@ void UpdateSoraReloadGauge(CardDisplayWork* p) {
  }
  
  void UpdateSoraCardValue(CardDisplayWork* w) {
@@ -1063,7 +1075,7 @@ index 7aa662205..360207f9f 100644
      // @bug A "not have" display has no cardDef (NULL read).
      if (gBtlWork->hcEffect == 16) {
          if (w->flags & CARD_DISP_FLAG_SELECTED) {
-@@ -5504,6 +5544,9 @@ void UpdateSoraCardValue(CardDisplayWork* w) {
+@@ -5504,6 +5549,9 @@ void UpdateSoraCardValue(CardDisplayWork* w) {
              break;
          }
      }
@@ -1073,7 +1085,7 @@ index 7aa662205..360207f9f 100644
  }
  
  void TickSoraHcEffectOnPlayEnd() {
-@@ -5552,3 +5595,114 @@ TaskDesc gTaskDescCardReload = {
+@@ -5552,3 +5600,114 @@ TaskDesc gTaskDescCardReload = {
      (TaskDestroyFunc)card_reload_3,
      sizeof(CardDisplayWork),
  };
@@ -1188,6 +1200,29 @@ index 7aa662205..360207f9f 100644
 +    PortSetStockArea(n, x0, x1, y);
 +}
 +#endif
+diff --git a/src/card/card_battle_riku.c b/src/card/card_battle_riku.c
+index 7ef98b4b7..5f0703af2 100644
+--- a/src/card/card_battle_riku.c
++++ b/src/card/card_battle_riku.c
+@@ -1464,6 +1464,18 @@ static void cardbattle_3(CardBattleWork* w) {
+ 
+     ReleaseObjTiles(w->tiles);
+     ReleaseObjPalette(w->palette);
++#ifdef PLATFORM_VITA
++    /*
++     * The selected card was destroyed with the task pool, but the pointer was
++     * kept. A later battle against a person (Riku, the Organization) polls it
++     * from the opponent's AI (HumChooseCardAction -> GetRikuSelectedMove)
++     * before its own card battle exists: on the GBA a stale pointer reads
++     * leftover memory, on the Vita it can point outside it and crash (seen
++     * skipping the scene before Riku's fight on 12F). NULL is the state those
++     * reads already have after a fresh start.
++     */
++    sRikuSelectedCard = NULL;
++#endif
+ }
+ 
+ void CloseRikuCards(CardBattleWork* w) {
 diff --git a/src/card/card_deckexchange.c b/src/card/card_deckexchange.c
 index 281ab517d..c640882b7 100644
 --- a/src/card/card_deckexchange.c
@@ -1753,7 +1788,7 @@ index 35eb0ab23..099eba26b 100644
      if (y + (s16)bottom < 0) {
          return 1;
 diff --git a/src/evt/event_message.c b/src/evt/event_message.c
-index d85e381ee..5edca7a87 100644
+index d85e381ee..013eb4fb1 100644
 --- a/src/evt/event_message.c
 +++ b/src/evt/event_message.c
 @@ -1,3 +1,7 @@
@@ -1764,7 +1799,35 @@ index d85e381ee..5edca7a87 100644
  #include "macros.h"
  #include "registration_data.h"
  #include "eventselect_api.h"
-@@ -6473,6 +6477,9 @@ static u8 msgwin_1(MsgWinWork* p, void* a) {
+@@ -50,6 +54,9 @@
+ #include "taskpool.h"
+ #include "types.h"
+ #include <stddef.h>
++#ifdef PLATFORM_VITA
++static s32 ClampEventCameraCenter(u32 eventId, s32 x);
++#endif
+ 
+ static void msgwin_0(MsgWinWork* p, u8* arg);
+ static u8 msgwin_1(MsgWinWork* p, void* a);
+@@ -5159,7 +5166,16 @@ s32 PlayEventCharaAnimSounds(EventCharaWork* p) {
+     u16 x;
+     u16 y;
+ 
+-    x = (p->obj.x >> 8) - (gEventState->x >> 8);
++#ifdef PLATFORM_VITA
++    /* A chara whose spawn is deferred (CHARA_KEYFRAME_FLAG_DEFER_SPAWN) has no
++     * object yet, but this still runs every frame and reads its never-set
++     * obj.anim. On the GBA that reads junk; here it crashed at the Genie's
++     * entrance before the Jafar fight in Agrabah (anim 0x2E7). */
++    if (p->hasObj == 0) {
++        return 0;
++    }
++#endif
++    x =(p->obj.x >> 8) - (gEventState->x >> 8);
+     y = (p->obj.y >> 8) + (p->obj.z >> 8) - (gEventState->y >> 8);
+ 
+     switch (p->keyframes[p->keyframe].anim) {
+@@ -6473,6 +6489,9 @@ static u8 msgwin_1(MsgWinWork* p, void* a) {
                      LoadBgTiles(p->bg, gUnk_094233B8, 0x500);
                      LoadBgPalette(p->bg, gUnk_096148D8, 32);
                      SetBgMapBlocks(p->bg, gMsgwinMapBlocks[p->position], 2, 1);
@@ -1774,7 +1837,7 @@ index d85e381ee..5edca7a87 100644
                      RedrawBgMapAt(p->bg, p->scrollX, 0);
                      SetTaskUpdate(a, (TaskUpdateFunc)MsgwinOpenUpdate);
                      RequestMsgfaceSlideIn(&p->face);
-@@ -6529,6 +6536,9 @@ static u8 msgwin_1(MsgWinWork* p, void* a) {
+@@ -6529,6 +6548,9 @@ static u8 msgwin_1(MsgWinWork* p, void* a) {
              LoadBgTiles(p->bg, gUnk_094233B8, 0x500);
              LoadBgPalette(p->bg, gUnk_096148D8, 32);
              SetBgMapBlocks(p->bg, gMsgwinMapBlocks[p->position], 2, 1);
@@ -1784,6 +1847,78 @@ index d85e381ee..5edca7a87 100644
              RedrawBgMapAt(p->bg, p->scrollX, 0);
              SetTaskUpdate(a, (TaskUpdateFunc)MsgwinOpenUpdate);
              RequestMsgfaceSlideIn(&p->face);
+@@ -7397,6 +7419,9 @@ void view_0(EventCameraWork* p, u8* arg) {
+         p->targetX = q->x;
+         p->targetY = q->y;
+     }
++#ifdef PLATFORM_VITA
++    p->targetX = ClampEventCameraCenter(p->eventId, p->targetX);
++#endif
+ 
+     gEventState->cameraX = p->targetX - 0x7800;
+     gEventState->cameraY = p->targetY - 0x5000;
+@@ -7714,7 +7739,31 @@ void view_2() {
+ void view_3() {
+ }
+ 
++#ifdef PLATFORM_VITA
++/*
++ * 16:9: keeps the scene camera far enough from the background's left and
++ * right ends that the widescreen margins show the background too. Many scenes
++ * frame the GBA's 240 columns right at an end of their map, and the 21 extra
++ * columns there showed black. Only for backgrounds of two blocks (512 px) or
++ * more; the 256-px ones are stretched instead (Event_0, mode_event.c).
++ */
++static s32 ClampEventCameraCenter(u32 eventId, s32 x) {
++    const EventBackgroundDef* u = gEventBackgroundDefs[eventId & 0x7FFF];
++    s32 m = PortWideMargin(), lo, hi;
++
++    if (m <= 0 || u == NULL || u->isAffine || u->mapWidth < 2 || (u->flags & EVENT_BG_FLAG_POOH_MAP)) {
++        return x;
++    }
++    lo = (GBA_SCREEN_WIDTH / 2 + m) << 8;
++    hi = (u->mapWidth * 256 - GBA_SCREEN_WIDTH / 2 - m) << 8;
++    return x < lo ? lo : x > hi ? hi : x;
++}
++#endif
++
+ void SetEventCameraCenter(EventCameraWork* p) {
++#ifdef PLATFORM_VITA
++    p->targetX = ClampEventCameraCenter(p->eventId, p->targetX);
++#endif
+     gEventState->centerX = p->targetX;
+     gEventState->centerY = p->targetY;
+ }
+diff --git a/src/evt/mode_event.c b/src/evt/mode_event.c
+index 2f96ced07..9c144e0e6 100644
+--- a/src/evt/mode_event.c
++++ b/src/evt/mode_event.c
+@@ -24,6 +24,9 @@
+ #include "save_api.h"
+ #include "taskpool.h"
+ #include "types.h"
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
+ #include <stddef.h>
+ 
+ static TaskPool sEventTaskPool;
+@@ -37,6 +40,15 @@ void Event_0(s32 arg) {
+ 
+     gEventState = EwramAlloc(sizeof(EventState));
+     e = gEventBackgroundDefs[arg & 0x7FFF];
++#ifdef PLATFORM_VITA
++    /* A 256-px background has nothing for the widescreen margins: the scene's
++     * 240 columns are stretched to the whole screen, as the wide menus
++     * (reset at the next mode start). Wider ones keep their camera inside the
++     * map instead (ClampEventCameraCenter, event_message.c). */
++    if (e != NULL && e->mapWidth == 1) {
++        PortWideMenu(1);
++    }
++#endif
+     gBldCnt = 0;
+     gBldAlpha = 0;
+     sEventId = arg;
 diff --git a/src/evt/mode_movie.c b/src/evt/mode_movie.c
 index 9d09a0773..31b22b30a 100644
 --- a/src/evt/mode_movie.c
@@ -3504,7 +3639,7 @@ index 23cff8867..dbf047484 100644
  #include "mode_sio_dbg.h"
  #include "mode_chkobj_assets.h"
 diff --git a/src/sroll/mode_staffroll.c b/src/sroll/mode_staffroll.c
-index 1368ac8ee..24d622a59 100644
+index 1368ac8ee..840a80ea4 100644
 --- a/src/sroll/mode_staffroll.c
 +++ b/src/sroll/mode_staffroll.c
 @@ -1,3 +1,4 @@
@@ -3512,6 +3647,105 @@ index 1368ac8ee..24d622a59 100644
  #include "registration_data.h"
  #include "system_state.h"
  #include "mode.h"
+@@ -21,6 +22,9 @@
+ #include "gba/syscall.h"
+ #include "key.h"
+ #include "m4a_song.h"
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
+ #include "obj.h"
+ #include "obj_api.h"
+ #include "taskpool.h"
+@@ -3078,6 +3082,10 @@ void mode_StaffRoll_0() {
+     StaffRollWork* w;
+     StaffRollWork** p;
+ 
++#ifdef PLATFORM_VITA
++    /* Started from the port menu (EXTRAS): saves the game state first. */
++    PortBossBattleInit();
++#endif
+     p = &sStaffRollWork;
+     w = EwramAlloc(sizeof(StaffRollWork));
+     *p = w;
+@@ -4416,6 +4424,13 @@ void mode_StaffRoll_1() {
+         w->phaseTimer++;
+ 
+         if (w->phaseTimer > 120) {
++#ifdef PLATFORM_VITA
++            /* From the port menu: back to the field instead of a reset. */
++            if (PortBossEnd(1)) {
++                m4aMPlayAllStop();
++                break;
++            }
++#endif
+ #ifdef VERSION_EU
+             DoSoftReset();
+ #else
+@@ -4443,6 +4458,9 @@ void mode_StaffRoll_2() {
+         EwramFree(w);
+         sStaffRollWork = NULL;
+     }
++#ifdef PLATFORM_VITA
++    PortBossBattleExit();
++#endif
+ }
+ 
+ Mode gModeStaffRoll = {
+diff --git a/src/sroll/pcm_audio.c b/src/sroll/pcm_audio.c
+index 29ddcc266..6a7bfe324 100644
+--- a/src/sroll/pcm_audio.c
++++ b/src/sroll/pcm_audio.c
+@@ -2,6 +2,9 @@
+ #include "sroll_api.h"
+ #include "gba/io_reg.h"
+ #include "types.h"
++#ifdef PLATFORM_VITA
++#include "port.h"
++#endif
+ 
+ static SoundEntry sPcmPlaybackConfigs[13] = {
+     {5734, 96, 62610},
+@@ -21,6 +24,9 @@ static SoundEntry sPcmPlaybackConfigs[13] = {
+ 
+ static s32 sPcmActiveBufferIndex;
+ static s32 sPcmSamplesPerBuffer;
++#ifdef PLATFORM_VITA
++static s32 sPcmSampleRate;
++#endif
+ static s8 sPcmOutputBufferA[0x2C0];
+ static s8 sPcmOutputBufferB[0x2C0];
+ 
+@@ -49,6 +55,9 @@ u8 PcmPlaybackInit(u32 sampleRate) {
+     if (!LookupPcmPlaybackConfig(sampleRate, &timerReload, (u32*)&sPcmSamplesPerBuffer)) {
+         return 0;
+     }
++#ifdef PLATFORM_VITA
++    sPcmSampleRate = sampleRate;
++#endif
+ 
+     REG_SOUNDCNT_H = (SOUND_CGB_MIX_FULL | SOUND_A_MIX_FULL | SOUND_A_RIGHT_OUTPUT | SOUND_A_LEFT_OUTPUT | SOUND_A_FIFO_RESET);
+     REG_SOUNDCNT_X = SOUND_MASTER_ENABLE;
+@@ -84,6 +93,19 @@ void PcmPlaybackUpdate() {
+ 
+     src = GetDecodedAudioBuffer();
+     pos = GetDecodedAudioReadPosition();
++#ifdef PLATFORM_VITA
++    /*
++     * The staff roll's music: the sound DMA played the buffer set at the last
++     * VBlank to FIFO A (both speakers) during the frame that just ended. The
++     * port has no sound FIFO, so hand those samples to the audio output, as
++     * SndStreamUpdate does for the movies (the m4a mixer is not running).
++     */
++    {
++        const s8* played = sPcmActiveBufferIndex == 1 ? sPcmOutputBufferA : sPcmOutputBufferB;
++
++        PortAudioPush(played, played, sPcmSamplesPerBuffer, sPcmSampleRate);
++    }
++#endif
+     REG_DMA1CNT ^= DMA_ENABLE << 16;
+     REG_DMA1SAD = (s32)(sPcmActiveBufferIndex == 1 ? sPcmOutputBufferB : sPcmOutputBufferA);
+     REG_DMA1CNT ^= DMA_ENABLE << 16;
 diff --git a/src/sroll/sroll_a_name.c b/src/sroll/sroll_a_name.c
 index 869d90240..1c9613bdc 100644
 --- a/src/sroll/sroll_a_name.c

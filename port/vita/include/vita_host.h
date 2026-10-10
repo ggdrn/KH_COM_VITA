@@ -24,8 +24,9 @@ enum {
     UPSCALE_MMPX,
     UPSCALE_COUNT,
 };
-/* How much each upscaler enlarges: 3 for Scale3x, 2 for the others. */
-#define UPSCALE_FACTOR(mode) ((mode) == UPSCALE_SCALE3X ? 3 : 2)
+/* How much each upscaler enlarges: 3 for Scale3x, 2 for the others; 1 with
+ * the upscaler off (the frame is copied as it is, see Copy1xRows). */
+#define UPSCALE_FACTOR(mode) ((mode) == UPSCALE_SCALE3X ? 3 : (mode) == UPSCALE_OFF ? 1 : 2)
 
 typedef struct PortConfig {
     int display;
@@ -47,6 +48,7 @@ typedef struct PortConfig {
     int saveBank;      /* 1..SAVE_BANKS: which save file holds the game's two slots */
     int wideMenus;     /* pause / save menus widened to the whole screen */
     int skipIntro;     /* launch straight into the title menu */
+    int dumpFrames;    /* config.ini only: save some frames' renderer input (vita_render.c) */
 } PortConfig;
 
 /* The game has two save slots; the port keeps SAVE_BANKS files of them, so
@@ -89,6 +91,8 @@ const uint32_t* RenderLockFront(int* slot, int* factor, int* wide);
 void RenderUnlockFront(void);
 extern volatile uint32_t gPortRenderUs;
 extern volatile uint32_t gPortScaleUs;
+/* Frames the game submitted unchanged, so not drawn again (vita_render.c). */
+extern volatile uint32_t gPortSkippedFrames;
 extern volatile uint32_t gPortCaptureWaitUs;
 
 void VideoInit(void);

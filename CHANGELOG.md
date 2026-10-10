@@ -8,6 +8,21 @@ Newest version first.
 
 ---
 
+## v0.08.01 — Crash fixes, Riku's boss practice, staff roll music
+
+### Fixed
+- Crash at the Genie's entrance before the Jafar fight (Agrabah).
+- Crash in the Riku fight on 12F after skipping the scene before it.
+- Staff roll music was silent.
+- Black edges in widescreen cutscenes (camera kept inside the map; narrow backgrounds stretched).
+- Smoother video: no slow per-frame texture upload, unchanged frames not redrawn.
+
+### New
+- **Boss practice in Reverse/Rebirth**, with Riku's full deck; the other story's bosses once it is finished.
+- **EXTRAS tab** (was TUTORIALS): tutorials and the staff roll of finished stories.
+
+---
+
 ## v0.08.00 — European ROM, boss practice, new upscalers
 
 ### New

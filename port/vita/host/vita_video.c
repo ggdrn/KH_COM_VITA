@@ -367,7 +367,8 @@ void VideoPresent(void) {
 
         if (slot >= 0) {
             /* Already in the texture's memory, which is sized for 3x: a 2x
-             * (Scale2x, MMPX) frame fills its top-left part. */
+             * (Scale2x, MMPX) or 1x (upscaler off) frame fills its top-left
+             * part. */
             w = sFrameWidth * 3;
             h = GBA_SCREEN_HEIGHT * 3;
             cover = factor / 3.0f;
@@ -392,7 +393,7 @@ void VideoPresent(void) {
     v1 = cover;
 
     glClear(GL_COLOR_BUFFER_BIT);
-    if (!DrawShaded(x0, x1, u0, u1, v1, w, h, slot >= 0)) {
+    if (!DrawShaded(x0, x1, u0, u1, v1, w, h, slot >= 0 && factor > 1)) {
         DrawFixed(x0, x1, u0, u1, v1, gPortConfig.filter != FILTER_NEAREST);
     }
     if (sBarProgress >= 0) {

@@ -12,6 +12,9 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/clib.h>
+#include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
+#include <stdio.h>
 
 #include <string.h>
 
@@ -63,8 +66,37 @@ static volatile int sScaleMode;             /* ... with this UPSCALE_* */
 static SceUID sScaleGameSema;               /* the game thread may join the upscale */
 static UpscaleFn sUpscale; /* the frame being enlarged's upscaler */
 
+/*
+ * With the upscaler off the frame still goes through the texture slots, as it
+ * is: uploading it (glTexSubImage2D) into the texture the GPU drew from the
+ * frame before made vitaGL reallocate the texture and copy its old contents
+ * back every frame, leaving its garbage collector the old copies. Written in
+ * place, presenting is binding a slot. Like the 2x upscalers, one more column
+ * (and, below the last line, one more line) repeats the edge for the
+ * presenter's filtering.
+ */
+static void Copy1xRows(const uint32_t* src, const uint8_t* mask, int target, int w, int h, uint32_t* dst,
+                       int dstStride, int y0, int y1) {
+    int y;
+
+    (void)mask;
+    (void)target;
+    for (y = y0; y < y1; y++) {
+        uint32_t* out = dst + y * dstStride;
+
+        sceClibMemcpy(out, src + y * w, w * 4);
+        out[w] = src[y * w + w - 1];
+        if (y == h - 1) {
+            sceClibMemcpy(out + dstStride, out, (w + 1) * 4);
+        }
+    }
+}
+
 static UpscaleFn UpscalerFor(int mode) {
-    return mode == UPSCALE_MMPX ? Mmpx2xRows : mode == UPSCALE_SCALE2X ? Scale2xRows : Scale3xRows;
+    return mode == UPSCALE_OFF       ? Copy1xRows
+           : mode == UPSCALE_MMPX    ? Mmpx2xRows
+           : mode == UPSCALE_SCALE2X ? Scale2xRows
+                                     : Scale3xRows;
 }
 static int sShown[2] = { -1, -1 };      /* slots of the last two presented frames */
 static int sTarget;                     /* slot being written */
@@ -155,7 +187,7 @@ static void MarkChangedRows(int mode, int target) {
  * upscaler into the cache, then all of them from the cache to the texture. */
 static void UpscaleRows(int y0, int y1) {
     int f = UPSCALE_FACTOR(sScaleMode);
-    int extra = f == 2; /* the 2x upscalers also write an edge column and, at the end, a line */
+    int extra = f != 3; /* the 1x copy and 2x upscalers also write an edge column and, at the end, a line */
     int y = y0, e;
 
     while (y < y1) {
@@ -454,8 +486,36 @@ void PortCaptureLine(int y) {
     memcpy(sFrames[sCapture].io[y], gGbaIo, PPU_LINE_IO_SIZE);
 }
 
+volatile uint32_t gPortSkippedFrames;
+
+/* dump_frames=1 (config.ini): every 5 s, the renderer's whole input for one
+ * frame (PpuFrame, plus the frame width) goes to ux0:data/khcom/frames, so the
+ * renderer can be measured and tuned on a computer with real scenes. */
+static void DumpFrame(const PpuFrame* f) {
+    static int sCount, sTick;
+    char path[64];
+    SceUID fd;
+
+    if (!gPortConfig.dumpFrames || sCount >= 30 || ++sTick % 300 != 0) {
+        return;
+    }
+    sceIoMkdir("ux0:data/khcom/frames", 0777);
+    snprintf(path, sizeof(path), "ux0:data/khcom/frames/frame%02d.bin", sCount);
+    fd = sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    if (fd >= 0) {
+        int32_t hdr[2] = { (int32_t)sizeof(*f), sWidth };
+
+        sceIoWrite(fd, hdr, sizeof(hdr));
+        sceIoWrite(fd, f, sizeof(*f));
+        sceIoClose(fd);
+        PortLog("render: frame dumped to %s", path);
+        sCount++;
+    }
+}
+
 /* Game thread: called once all lines were captured. */
 void PortCaptureSubmit(void) {
+    static int sSubmitted, sLastUpscale = -1, sLastTarget = -1;
     PpuFrame* f = &sFrames[sCapture];
     SceUInt64 t0;
 
@@ -469,6 +529,26 @@ void PortCaptureSubmit(void) {
     memcpy(f->oam, gGbaOam, sizeof(f->oam));
     memcpy(f->vram, gGbaVram, sizeof(f->vram));
 
+    /*
+     * A frame made of exactly the same input as the last one (every line's
+     * registers, palette, sprites, video memory, map streams and flags) looks
+     * the same: the last one stays on screen and nothing is drawn (menus,
+     * dialogue waiting for a button, paused scenes). sFrames[sCapture ^ 1] is
+     * the last frame handed over; comparing it is ~0.1 ms against several ms of
+     * drawing on three cores.
+     */
+    if (sSubmitted && gPortConfig.upscale == sLastUpscale && gPortConfig.upscaleTarget == sLastTarget &&
+        memcmp(f, &sFrames[sCapture ^ 1], sizeof(*f)) == 0) {
+        gPortSkippedFrames++;
+        gPortRenderUs = 0;
+        gPortScaleUs = 0;
+        return;
+    }
+    sSubmitted = 1;
+    DumpFrame(f);
+    sLastUpscale = gPortConfig.upscale;
+    sLastTarget = gPortConfig.upscaleTarget;
+
     t0 = sceKernelGetProcessTimeWide();
     sceKernelWaitSema(sIdleSema, 1, NULL);
     gPortCaptureWaitUs = (uint32_t)(sceKernelGetProcessTimeWide() - t0);
@@ -476,7 +556,7 @@ void PortCaptureSubmit(void) {
     sCapture ^= 1;
     /* The render threads are idle: set the frame up for all three threads. */
     sScaleMode = gPortConfig.upscale;
-    sScaleFrame = sScaleMode != UPSCALE_OFF && sSlotData[0] != NULL;
+    sScaleFrame = sSlotData[0] != NULL; /* with the upscaler off: Copy1xRows */
     sBack = sFront ^ 1;
     PpuSetOutput(sRgba[sBack], sWidth, sWidth);
     /* The sprite mask is only needed to smooth sprites or scenery alone. */
@@ -502,7 +582,7 @@ const uint32_t* RenderLockFront(int* slot, int* factor, int* wide) {
     *wide = sWideFrame[sFront];
     *slot = -1;
     *factor = 1;
-    if (mode == UPSCALE_OFF || sSlotData[0] == NULL) {
+    if (sSlotData[0] == NULL) {
         return sRgba[sFront];
     }
     /* Changed in the paused menu: no new frame comes, so enlarge this one. */

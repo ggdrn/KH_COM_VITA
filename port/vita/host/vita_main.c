@@ -318,14 +318,17 @@ void PortSaveConfig(void) {
                    "# wide_menus=1: menu screens (deck, world map, map/world cards, status, journal) stretched to 16:9\n"
                    "wide_menus=%d\n"
                    "# skip_intro=1: launch straight into the title menu (no logos)\n"
-                   "skip_intro=%d\n",
+                   "skip_intro=%d\n"
+                   "# dump_frames=1: every 5 s save a frame's renderer input to ux0:data/khcom/frames\n"
+                   "# (up to 30, for performance work; send them to the developer)\n"
+                   "dump_frames=%d\n",
                    displays[gPortConfig.display], gPortConfig.filter == FILTER_NEAREST ? "nearest" : "linear",
                    gPortConfig.swapAB, sUpscaleNames[gPortConfig.upscale],
                    sTargetNames[gPortConfig.upscaleTarget], gPortConfig.sharp, gPortConfig.gbaColors,
                    sTouchNames[gPortConfig.touchUnstock], sHoldNames[gPortConfig.unstockHold],
                    gPortConfig.squareDodge, gPortConfig.triangleLR,
                    gPortConfig.rightStick, gPortConfig.fieldHud, gPortConfig.saveBank,
-                   gPortConfig.wideMenus, gPortConfig.skipIntro);
+                   gPortConfig.wideMenus, gPortConfig.skipIntro, gPortConfig.dumpFrames);
     fd = sceIoOpen(CONFIG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
     if (fd >= 0) {
         sceIoWrite(fd, buf, len);
@@ -405,6 +408,8 @@ static void LoadConfig(void) {
             gPortConfig.rightStick = atoi(eq) != 0;
         } else if (!strcmp(line, "skip_intro")) {
             gPortConfig.skipIntro = atoi(eq) != 0;
+        } else if (!strcmp(line, "dump_frames")) {
+            gPortConfig.dumpFrames = atoi(eq) != 0;
         } else if (!strcmp(line, "wide_menus")) {
             gPortConfig.wideMenus = atoi(eq) != 0;
         } else if (!strcmp(line, "field_hud")) {
@@ -438,14 +443,18 @@ void PortVBlankWait(void) {
     /* Status every second for the first minute, then every 10 s. */
     frames++;
     if (frames <= 5 || (frames <= 3600 && frames % 60 == 0) || frames % 600 == 0) {
+        static uint32_t sLastSkipped;
         const uint16_t* io = (const uint16_t*)gGbaIo;
         uint32_t n = sSamples ? sSamples : 1;
+        uint32_t skipped = gPortSkippedFrames - sLastSkipped;
+
+        sLastSkipped = gPortSkippedFrames;
         PortLog("frame %u: vblankIrq=%u modeUpd=%u DISPCNT=%04X BLDCNT=%04X pal0=%04X keys=%03X | "
-                "avg us: logic=%u render=%u renderWait=%u present=%u maxFrame=%u scale=%u",
+                "avg us: logic=%u render=%u renderWait=%u present=%u maxFrame=%u scale=%u skipped=%u",
                 frames, (unsigned)gPortVBlankIrqs, (unsigned)gPortModeUpdates, io[0], io[0x50 / 2],
                 ((const uint16_t*)gGbaPltt)[0], PortReadKeys(), (unsigned)(sSumLogic / n),
                 (unsigned)(sSumRender / n), (unsigned)(sSumWait / n), (unsigned)(sSumPresent / n),
-                (unsigned)sMaxFrame, (unsigned)gPortScaleUs);
+                (unsigned)sMaxFrame, (unsigned)gPortScaleUs, (unsigned)skipped);
         sSumLogic = sSumPresent = sSumRender = sSumWait = sMaxFrame = sSamples = 0;
     }
 
